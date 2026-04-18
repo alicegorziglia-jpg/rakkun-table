@@ -24,19 +24,25 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Limpiar caché corrupto de Gradle
+      - name: Limpiar caché potencialmente corrupto de Gradle
         run: |
           rm -rf ~/.gradle/caches/jars-*
           rm -rf ~/.gradle/caches/modules-*/files-*
 
-      - name: Setup Gradle
+      - name: Setup Gradle (instala Gradle 8.6 en el runner)
         uses: gradle/actions/setup-gradle@v3
         with:
-          gradle-version: '8.2'
+          gradle-version: '8.6'
           cache-disabled: true
 
-      - name: Build debug APK
-        run: gradle assembleDebug --no-daemon --no-build-cache --refresh-dependencies
+      - name: Check Java and Gradle versions
+        run: |
+          java -version
+          ./gradlew --version
+        working-directory: android
+
+      - name: Build debug APK (usa el wrapper del repo)
+        run: ./gradlew assembleDebug --no-daemon --no-build-cache --refresh-dependencies --stacktrace --info
         working-directory: android
 
       - name: Upload APK
