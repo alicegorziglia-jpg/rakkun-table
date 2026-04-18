@@ -1,3 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Config
+BRANCH="fix/ci-gradle-wrapper"
+REMOTE="origin"
+
+echo "Fetching origin..."
+git fetch "$REMOTE"
+
+# create branch from origin/main or reset if exists
+if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
+  git checkout "$BRANCH"
+  git reset --hard "$REMOTE/main"
+else
+  git checkout -b "$BRANCH" "$REMOTE/main"
+fi
+
+mkdir -p .github/workflows
+
+cat > .github/workflows/build-apk.yml <<'YAML'
 name: Build APK
 
 on:
@@ -84,3 +105,33 @@ jobs:
           name: GraphicTablet ${{ github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+YAML
+
+# Try to generate Gradle wrapper locally (only if gradle is available)
+if command -v gradle >/dev/null 2>&1; then
+  echo "Gradle detected locally: generating wrapper in android/ (gradle --version)"
+  gradle --version | head -n 1 || true
+  (cd android && gradle wrapper --gradle-version 8.6)
+else
+  echo "Gradle not found locally. Skipping local wrapper generation; CI will generate it on the runner."
+fi
+
+# Add files (safe: add what exists)
+git add .github/workflows/build-apk.yml || true
+git add android/gradlew android/gradlew.bat android/gradle/wrapper/gradle-wrapper.jar android/gradle/wrapper/gradle-wrapper.properties 2>/dev/null || true
+
+# Mark gradlew executable if present
+if [ -f android/gradlew ]; then
+  git update-index --chmod=+x android/gradlew || true
+fi
+
+# Commit & push if there are changes
+if [ -n "$(git status --porcelain)" ]; then
+  git commit -m "CI: generate Gradle wrapper if missing, use Gradle 8.6 and run build with ./gradlew"
+  git push --set-upstream "$REMOTE" "$BRANCH"
+  echo "Pushed branch $BRANCH. Create a PR from it to main (or merge directly)."
+else
+  echo "No changes to commit. Branch is up-to-date."
+fi
+
+echo "Done."
