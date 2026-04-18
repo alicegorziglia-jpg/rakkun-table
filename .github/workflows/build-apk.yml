@@ -5,6 +5,7 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  # También podés buildear manualmente desde la UI de GitHub
   workflow_dispatch:
 
 jobs:
@@ -39,7 +40,7 @@ jobs:
           gradle-version: '8.2'
 
       - name: Build debug APK
-        run: gradle assembleDebug --no-daemon
+        run: gradle assembleDebug --no-daemon --no-build-cache
         working-directory: android
 
       - name: Upload APK
