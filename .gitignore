@@ -1,0 +1,42 @@
+# Build outputs
+build/
+*/build/
+*/*/build/
+
+# IDE
+.vs/
+.idea/
+*.suo
+*.user
+
+# Compiled files
+*.obj
+*.o
+*.lib
+*.dll
+*.exe
+*.so
+*.a
+
+# APK outputs
+*.apk
+*.aab
+*.keystore
+
+# Logs
+*.log
+
+# Config (contains secrets)
+config.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# vcpkg
+vcpkg_installed/
+
+# Android
+*.iml
+.gradle/
+local.properties

@@ -1,62 +1,101 @@
-# GraphicTablet
+# PenStream
 
-> Tablet gráfica de baja latencia: usa tu Android como pantalla táctil/stylus del PC.  
-> 60fps · Resolución nativa · Hardware encoding (NVENC/AMF/QSV)
+Transform your Android tablet or phone into a high-performance graphics tablet with ultra-low latency.
 
----
+## Features
 
-## Estado del proyecto
+- **1080p60 streaming** with <10ms latency
+- **DirectX 11 capture** for zero-copy screen capture
+- **NVENC hardware encoding** for minimal CPU usage
+- **Pressure sensitivity** support (4096 levels)
+- **Automatic discovery** - no manual IP configuration
+- **Cross-platform input** - works with any drawing app
 
-| Fase | Descripción | Estado |
-|---|---|---|
-| **1** | Stream Windows → Android (video 60fps) | ✅ En desarrollo |
-| **2** | Input Android → Windows (touch/stylus con presión) | 🔜 Próximo |
-| **3** | Windows Ink API (presión real en apps de dibujo) | 🔜 Planificado |
-
----
-
-## Estructura
+## Architecture
 
 ```
-GraphicTablet/
-├── server/           # Python - Windows host
-│   ├── server.py     # Captura + stream con FFmpeg
-│   └── README.md     # Instrucciones
-└── android/          # Kotlin - cliente Android
-    └── app/src/main/
-        ├── java/com/graphictablet/
-        │   └── MainActivity.kt    # Player + input sender
-        └── res/layout/
-            └── activity_main.xml
+┌─────────────────┐         UDP          ┌─────────────────┐
+│  Windows Server │◄────────────────────►│  Android Client │
+│                 │                      │                 │
+│  DXGI Capture   │────┐                 │  MediaCodec     │
+│  NVENC Encode   │────┼───── Video ────►│  OpenGL Render  │
+│  Input Handler  │◄───┘                 │  Input Capture  │
+└─────────────────┘                      └─────────────────┘
 ```
 
----
+## Prerequisites
 
-## Setup rápido
+### Server (Windows)
+- Windows 10/11 with NVIDIA GPU (for NVENC)
+- Visual Studio 2022 with C++ workload
+- vcpkg package manager
+- NVIDIA Video Codec SDK
 
-### 1. Windows (server)
-```bash
-# Instalar FFmpeg
-winget install ffmpeg
+### Client (Android)
+- Android 8.0 (API 26) or higher
+- Android Studio with NDK
+- Device with stylus support (recommended)
 
-# Correr el server
-cd server
-python server.py
+## Building
+
+### Server
+```batch
+cd scripts
+build_server.bat
 ```
 
-### 2. Android (cliente)
-1. Abrir el proyecto `android/` en Android Studio
-2. Build → Run en tu dispositivo
-3. Ingresar la IP del Windows en el server cuando te lo pida
+### Android
+```batch
+cd scripts
+build_android.bat
+```
 
----
+## Installation
 
-## Por qué es más rápido que Weylus
+1. Run `penstream_server.exe` on your Windows PC
+2. Install the APK on your Android device
+3. Connect both devices to the same WiFi network
+4. Open the app and select your PC from the list
 
-| | Weylus | GraphicTablet |
-|---|---|---|
-| Captura | Software (CPU) | DXGI GPU directo |
-| Encoding | libx264 software | NVENC/AMF hardware |
-| Transporte | WebRTC (~100ms) | UDP MPEG-TS (~15ms) |
-| Decoder Android | WebRTC (JS) | MediaCodec hardware |
-| Input | uinput (Linux only) | Windows Ink API |
+## Configuration
+
+Edit `config.json` on the server:
+
+```json
+{
+  "port": 9696,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "bitrate_kbps": 10000,
+  "encoder": "nvenc",
+  "low_latency": true
+}
+```
+
+## Troubleshooting
+
+**No servers found**
+- Ensure both devices are on the same network
+- Check Windows Firewall is not blocking UDP port 9696
+
+**High latency**
+- Reduce resolution or bitrate in settings
+- Use 5GHz WiFi instead of 2.4GHz
+- Ensure NVENC is being used (check server logs)
+
+**No pressure sensitivity**
+- Your device must support stylus pressure
+- Some apps may not recognize virtual input - try Krita or Clip Studio
+
+## License
+
+MIT License - see LICENSE file for details
+
+## Credits
+
+Built with:
+- DirectX 11 Desktop Duplication API
+- NVIDIA NVENC
+- Android MediaCodec
+- OpenGL ES 3.0
