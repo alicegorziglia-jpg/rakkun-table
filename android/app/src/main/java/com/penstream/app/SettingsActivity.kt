@@ -4,6 +4,7 @@ import android.content.SharedPreferences
 import android.os.Bundle
 import android.widget.ArrayAdapter
 import androidx.appcompat.app.AppCompatActivity
+import androidx.preference.PreferenceManager
 import com.penstream.app.databinding.ActivitySettingsBinding
 import timber.log.Timber
 
@@ -17,7 +18,7 @@ class SettingsActivity : AppCompatActivity(), SharedPreferences.OnSharedPreferen
         binding = ActivitySettingsBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        prefs = getSharedPreferences("penstream_prefs", MODE_PRIVATE)
+        prefs = PreferenceManager.getDefaultSharedPreferences(this)
 
         setupUI()
         loadSettings()

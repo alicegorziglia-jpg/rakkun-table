@@ -27,6 +27,7 @@ public:
 
     uint32_t get_width() const { return m_width; }
     uint32_t get_height() const { return m_height; }
+    ID3D11Device* get_device() const { return m_device; }
 
 private:
     bool create_device();

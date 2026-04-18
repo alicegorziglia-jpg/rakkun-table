@@ -44,6 +44,10 @@ int run() {
 
     // Inicializar encoder NVENC
     encode::NVEncoder encoder;
+
+    // Pasar dispositivo D3D11 del capturer al encoder para interop
+    encoder.set_d3d_device(capturer.get_device());
+
     EncodeConfig encode_config;
     encode_config.width = config.width;
     encode_config.height = config.height;
@@ -135,7 +139,8 @@ int run() {
                 std::vector<uint8_t> encoded_data;
                 if (encoder.encode(frame, encoded_data) && !encoded_data.empty()) {
                     // Enviar por UDP
-                    if (transport.send_video_frame(encoded_data, frame_id, frame.timestamp_us)) {
+                    if (transport.send_video_frame(encoded_data, frame_id, frame.timestamp_us,
+                                                   frame.width, frame.height)) {
                         frames_sent++;
                     }
                 }

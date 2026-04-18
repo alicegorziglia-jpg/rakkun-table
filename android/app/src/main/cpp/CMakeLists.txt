@@ -1,11 +1,13 @@
 cmake_minimum_required(VERSION 3.25)
 project(penstream_android)
 
+# C++20 standard
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Add Android log library
+# Android log library
 find_library(log-lib log)
+find_library(android-lib android)
 
 # Native library
 add_library(penstream SHARED
@@ -24,12 +26,33 @@ target_include_directories(penstream PRIVATE
 # Link libraries
 target_link_libraries(penstream
     android
+    ${android-lib}
     ${log-lib}
     EGL
     GLESv3
+    OpenSLES
 )
 
-# Enable optimizations
-if(CMAKE_BUILD_TYPE Release)
-    target_compile_options(penstream PRIVATE -O3)
+# Compiler flags
+target_compile_options(penstream PRIVATE
+    -Wall
+    -Wextra
+    -Wno-unused-parameter
+)
+
+# Optimizations for release builds
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    target_compile_options(penstream PRIVATE
+        -O3
+        -DNDEBUG
+    )
+endif()
+
+# Debug flags
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_options(penstream PRIVATE
+        -g
+        -O0
+        -DDEBUG
+    )
 endif()

@@ -4,12 +4,12 @@
 #include <windows.h>
 #include <vector>
 #include <d3d11.h>
+#include <dxgi1_2.h>
 
-// NVENC forward declarations
-// Full types from: https://developer.nvidia.com/nvidia-video-codec-sdk
-#ifndef NV_ENCODE_API_FUNCTION_LIST
-typedef struct _NV_ENCODE_API_FUNCTION_LIST NV_ENCODE_API_FUNCTION_LIST;
-#endif
+// NVENC SDK includes - require NVIDIA Video Codec SDK
+// Download from: https://developer.nvidia.com/nvidia-video-codec-sdk
+// Add to path: $ENV{NVENC_SDK_PATH}/Interfaces
+#include <nvEncodeAPI.h>
 
 namespace penstream::encode {
 
@@ -29,19 +29,26 @@ public:
 private:
     bool load_nvenc();
     bool create_encoder(const EncodeConfig& config);
-    bool allocate_input_buffer();
+    bool register_d3d11_resource();
 
     HMODULE m_nvenc_lib;
-    NV_ENCODE_API_FUNCTION_LIST* m_nvenc;
+    NV_ENCODE_API_FUNCTION_LIST m_nvenc;
     void* m_encoder;
     ID3D11Device* m_d3d_device;
     ID3D11Texture2D* m_input_texture;
-    void* m_mapped_buffer;
+    void* m_registered_resource;
 
+    // Encoder config
     uint32_t m_width;
     uint32_t m_height;
     uint32_t m_fps;
+    uint32_t m_bitrate;
+    bool m_low_latency;
     bool m_initialized;
+
+    // Encode state
+    uint32_t m_sequence_num;
+    bool m_need_keyframe;
 };
 
 } // namespace penstream::encode

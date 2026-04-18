@@ -146,13 +146,14 @@ bool UDPTransport::receive(std::vector<uint8_t>& out_data, sockaddr_in& out_addr
 }
 
 bool UDPTransport::send_video_frame(const std::vector<uint8_t>& encoded_data,
-                                     uint32_t frame_id, uint64_t timestamp_us) {
+                                     uint32_t frame_id, uint64_t timestamp_us,
+                                     uint16_t width, uint16_t height) {
     if (!m_has_client) {
         return false;
     }
 
     auto packet = PacketBuilder::build_video_frame(
-        m_sequence_num++, frame_id, 0, 0, encoded_data);
+        m_sequence_num++, frame_id, width, height, encoded_data);
 
     return send_to(m_client_addr, packet);
 }
