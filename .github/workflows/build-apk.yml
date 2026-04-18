@@ -35,6 +35,19 @@ jobs:
           gradle-version: '8.6'
           cache-disabled: true
 
+      - name: Ensure Gradle wrapper exists (generate if missing)
+        run: |
+          if [ ! -f android/gradlew ]; then
+            echo "Gradle wrapper missing — generating with gradle ..."
+            (cd android && gradle wrapper --gradle-version 8.6)
+          else
+            echo "Gradle wrapper already present"
+          fi
+          chmod +x android/gradlew
+
+      - name: Debug android dir
+        run: ls -la android || true
+
       - name: Check Java and Gradle versions
         run: |
           java -version
