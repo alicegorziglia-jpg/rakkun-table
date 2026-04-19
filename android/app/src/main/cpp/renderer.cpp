@@ -12,6 +12,7 @@ Renderer::Renderer()
     , m_display(EGL_NO_DISPLAY)
     , m_surface(EGL_NO_SURFACE)
     , m_context(EGL_NO_CONTEXT)
+    , m_config(nullptr)
     , m_program(0)
     , m_texture(0)
     , m_initialized(false)
@@ -33,6 +34,24 @@ bool Renderer::initialize() {
             LOGE("Failed to initialize EGL");
             return false;
         }
+
+        // Elegir configuración EGL
+        const EGLint config_attribs[] = {
+            EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
+            EGL_SURFACE_TYPE,    EGL_WINDOW_BIT,
+            EGL_RED_SIZE,        8,
+            EGL_GREEN_SIZE,      8,
+            EGL_BLUE_SIZE,       8,
+            EGL_ALPHA_SIZE,      8,
+            EGL_NONE
+        };
+
+        EGLint num_configs = 0;
+        if (!eglChooseConfig(m_display, config_attribs, &m_config, 1, &num_configs)
+            || num_configs == 0) {
+            LOGE("Failed to choose EGL config");
+            return false;
+        }
     }
 
     m_initialized = true;
@@ -45,92 +64,61 @@ void Renderer::set_surface(ANativeWindow* window) {
         return;
     }
 
-    // Cleanup old surface
+    // Limpiar superficie anterior
     if (m_surface != EGL_NO_SURFACE) {
+        eglMakeCurrent(m_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
         eglDestroySurface(m_display, m_surface);
         m_surface = EGL_NO_SURFACE;
     }
 
     m_window = window;
 
-    if (m_window != nullptr) {
-        // Create new surface
-        const EGLint attribs[] = {
+    if (m_window != nullptr && m_config != nullptr) {
+        const EGLint surface_attribs[] = {
             EGL_RENDER_BUFFER, EGL_BACK_BUFFER,
             EGL_NONE
         };
-        m_surface = eglCreateWindowSurface(m_display, EGL_DEFAULT_CONFIG, m_window, attribs);
+        m_surface = eglCreateWindowSurface(m_display, m_config, m_window, surface_attribs);
 
         if (m_surface == EGL_NO_SURFACE) {
             LOGE("Failed to create EGL surface");
             return;
         }
 
-        // Create context if needed
         if (m_context == EGL_NO_CONTEXT) {
             const EGLint context_attribs[] = {
                 EGL_CONTEXT_CLIENT_VERSION, 3,
                 EGL_NONE
             };
-            m_context = eglCreateContext(m_display, EGL_DEFAULT_CONFIG, EGL_NO_CONTEXT, context_attribs);
+            m_context = eglCreateContext(m_display, m_config, EGL_NO_CONTEXT, context_attribs);
         }
 
         eglMakeCurrent(m_display, m_surface, m_surface, m_context);
-
-        // Setup OpenGL
         setup_shaders();
     }
 }
 
 void Renderer::setup_shaders() {
-    // Simple passthrough shader for YUV->RGB conversion
-    const char* vertex_shader = R"(
-        #version 300 es
-        layout(location = 0) in vec4 a_position;
-        layout(location = 1) in vec2 a_texCoord;
-        out vec2 v_texCoord;
-        void main() {
-            gl_Position = a_position;
-            v_texCoord = a_texCoord;
-        }
-    )";
-
-    const char* fragment_shader = R"(
-        #version 300 es
-        precision mediump float;
-        in vec2 v_texCoord;
-        uniform sampler2D u_texture;
-        out vec4 fragColor;
-        void main() {
-            fragColor = texture(u_texture, v_texCoord);
-        }
-    )";
-
-    // Compile shaders (simplified - would need full compilation code)
-    // For now, just clear to a color
+    // Limpiar a color de fondo por ahora
     glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
 }
 
-void Renderer::render_frame(const void* y_data, const void* uv_data,
-                            int32_t width, int32_t height) {
+void Renderer::render_frame(const void* /*y_data*/, const void* /*uv_data*/,
+                            int32_t /*width*/, int32_t /*height*/) {
     if (!m_initialized || m_surface == EGL_NO_SURFACE) {
         return;
     }
 
-    // Make context current
     eglMakeCurrent(m_display, m_surface, m_surface, m_context);
-
-    // Clear screen
     glClear(GL_COLOR_BUFFER_BIT);
-
-    // Render frame (would bind texture and draw quad)
-    // Simplified for scaffolding
-
-    // Swap buffers
     eglSwapBuffers(m_display, m_surface);
 }
 
 void Renderer::release() {
+    if (m_display != EGL_NO_DISPLAY) {
+        eglMakeCurrent(m_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    }
+
     if (m_context != EGL_NO_CONTEXT) {
         eglDestroyContext(m_display, m_context);
         m_context = EGL_NO_CONTEXT;
@@ -147,6 +135,7 @@ void Renderer::release() {
     }
 
     m_window = nullptr;
+    m_config = nullptr;
     m_initialized = false;
 }
 

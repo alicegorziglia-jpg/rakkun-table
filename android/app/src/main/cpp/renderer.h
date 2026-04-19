@@ -25,6 +25,7 @@ private:
     EGLDisplay m_display;
     EGLSurface m_surface;
     EGLContext m_context;
+    EGLConfig  m_config;
     GLuint m_program;
     GLuint m_texture;
     bool m_initialized;

@@ -3,8 +3,8 @@
 #include <vector>
 #include <cstdint>
 #include <android/native_window.h>
-#include <android/media_mediaformat.h>
-#include <android/codec.h>
+#include <media/NdkMediaCodec.h>
+#include <media/NdkMediaFormat.h>
 
 namespace penstream::android {
 
