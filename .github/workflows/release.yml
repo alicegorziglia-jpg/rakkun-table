@@ -30,11 +30,17 @@ jobs:
           C:\vcpkg\bootstrap-vcpkg.bat
           echo "VCPKG_ROOT=C:\vcpkg" | Out-File -Append -FilePath $env:GITHUB_ENV
 
+      - name: Install dependencies via vcpkg
+        shell: pwsh
+        run: |
+          C:\vcpkg\vcpkg install --triplet x64-windows
+
       - name: Build Windows binary
         shell: pwsh
         run: |
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
-            -DCMAKE_TOOLCHAIN_FILE="C:\vcpkg\scripts\buildsystems\vcpkg.cmake"
+            -DCMAKE_TOOLCHAIN_FILE="C:\vcpkg\scripts\buildsystems\vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows
           cmake --build build --config Release
 
       - name: Prepare Windows artifact
@@ -71,6 +77,14 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Generate Gradle wrapper
+        run: |
+          cd android
+          gradle wrapper --gradle-version=8.4
 
       - name: Decode keystore
         run: |

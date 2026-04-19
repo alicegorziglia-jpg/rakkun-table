@@ -48,7 +48,6 @@ vcpkg_installed/
 *.iml
 .gradle/
 local.properties
-gradle-wrapper.jar
 
 # Python (si usas scripts)
 __pycache__/
