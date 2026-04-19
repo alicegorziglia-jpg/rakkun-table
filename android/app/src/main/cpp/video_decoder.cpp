@@ -1,9 +1,22 @@
 #include "video_decoder.h"
 #include <android/log.h>
+#include <cstring>
 
 #define LOG_TAG "PenStreamDecoder"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+
+// AMEDIAFORMAT_MIME_TYPE_VIDEO_AVC fue introducido en API 29.
+// Para API 26+ usamos el string literal directamente.
+#ifndef AMEDIAFORMAT_MIME_TYPE_VIDEO_AVC
+#define AMEDIAFORMAT_MIME_TYPE_VIDEO_AVC "video/avc"
+#endif
+
+// AMEDIACODEC_BUFFER_FLAG_KEY_FRAME no existe en NDK API 26.
+// El valor equivalente es 1 (BUFFER_FLAG_SYNC_FRAME de la Java API).
+#ifndef AMEDIACODEC_BUFFER_FLAG_KEY_FRAME
+#define AMEDIACODEC_BUFFER_FLAG_KEY_FRAME 1
+#endif
 
 namespace penstream::android {
 
@@ -22,57 +35,38 @@ VideoDecoder::~VideoDecoder() {
 
 void VideoDecoder::set_surface(ANativeWindow* surface) {
     m_surface = surface;
-
-    // If already initialized, reconfigure codec with new surface
     if (m_initialized && m_codec) {
-        AMediaCodec_configure(
-            m_codec,
-            m_format,
-            m_surface,
-            nullptr,
-            0
-        );
+        AMediaCodec_configure(m_codec, m_format, m_surface, nullptr, 0);
         LOGI("Decoder reconfigured with new surface");
     }
 }
 
 bool VideoDecoder::initialize(int32_t width, int32_t height, ANativeWindow* surface) {
-    m_width = width;
+    m_width  = width;
     m_height = height;
     m_surface = surface;
 
-    // Create media format for H.264
     m_format = AMediaFormat_new();
     AMediaFormat_setString(m_format, AMEDIAFORMAT_KEY_MIME, AMEDIAFORMAT_MIME_TYPE_VIDEO_AVC);
     AMediaFormat_setInt32(m_format, AMEDIAFORMAT_KEY_WIDTH, width);
     AMediaFormat_setInt32(m_format, AMEDIAFORMAT_KEY_HEIGHT, height);
 
-    // Low latency settings
-    AMediaFormat_setInt32(m_format, AMEDIAFORMAT_KEY_LOW_LATENCY, 1);
-    AMediaFormat_setInt32(m_format, AMEDIAFORMAT_KEY_OPERATING_RATE, 60);
+    // AMEDIAFORMAT_KEY_LOW_LATENCY requiere API 30.
+    // AMEDIAFORMAT_KEY_OPERATING_RATE requiere API 28.
+    // Los omitimos para mantener compatibilidad con API 26.
 
-    // Create decoder
     m_codec = AMediaCodec_createDecoderByType(AMEDIAFORMAT_MIME_TYPE_VIDEO_AVC);
     if (m_codec == nullptr) {
         LOGE("Failed to create decoder");
         return false;
     }
 
-    // Configure decoder with surface for direct rendering
-    media_status_t status = AMediaCodec_configure(
-        m_codec,
-        m_format,
-        m_surface,
-        nullptr,
-        0  // flags - 0 means decoder mode
-    );
-
+    media_status_t status = AMediaCodec_configure(m_codec, m_format, m_surface, nullptr, 0);
     if (status != AMEDIA_OK) {
         LOGE("Failed to configure decoder: %d", status);
         return false;
     }
 
-    // Start decoder
     status = AMediaCodec_start(m_codec);
     if (status != AMEDIA_OK) {
         LOGE("Failed to start decoder: %d", status);
@@ -80,7 +74,7 @@ bool VideoDecoder::initialize(int32_t width, int32_t height, ANativeWindow* surf
     }
 
     m_initialized = true;
-    LOGI("Decoder initialized: %dx%d with surface", width, height);
+    LOGI("Decoder initialized: %dx%d", width, height);
     return true;
 }
 
@@ -89,52 +83,34 @@ bool VideoDecoder::decode(const std::vector<uint8_t>& encoded_data, bool is_keyf
         return false;
     }
 
-    // Get input buffer with timeout
     ssize_t index = AMediaCodec_dequeueInputBuffer(m_codec, 10000);
     if (index < 0) {
-        LOGI("No input buffer available (timeout)");
+        LOGI("No input buffer available");
         return false;
     }
 
-    // Get input buffer info
     size_t size;
-    uint8_t* buffer = AMediaCodec_getInputBuffer(m_codec, index, &size);
+    uint8_t* buffer = AMediaCodec_getInputBuffer(m_codec, static_cast<size_t>(index), &size);
     if (buffer == nullptr) {
         LOGE("Failed to get input buffer");
         return false;
     }
 
-    // Copy encoded data to input buffer
     size_t copy_size = std::min(size, encoded_data.size());
     memcpy(buffer, encoded_data.data(), copy_size);
 
-    // Determine flags
     uint32_t flags = 0;
     if (is_keyframe) {
         flags = AMEDIACODEC_BUFFER_FLAG_KEY_FRAME;
         LOGI("Sending keyframe to decoder");
     }
 
-    // Queue input buffer
-    AMediaCodec_queueInputBuffer(
-        m_codec,
-        index,
-        0,
-        copy_size,
-        0,  // presentation time - could extract from packet
-        flags
-    );
+    AMediaCodec_queueInputBuffer(m_codec, static_cast<size_t>(index), 0, copy_size, 0, flags);
 
-    // Process output buffers
     AMediaCodecBufferInfo info;
     ssize_t out_index;
-
     while ((out_index = AMediaCodec_dequeueOutputBuffer(m_codec, &info, 0)) >= 0) {
-        if (out_index >= 0) {
-            // Release buffer to surface for display
-            // render=true means it will be displayed
-            AMediaCodec_releaseOutputBuffer(m_codec, out_index, true);
-        }
+        AMediaCodec_releaseOutputBuffer(m_codec, static_cast<size_t>(out_index), true);
     }
 
     return true;
@@ -146,12 +122,10 @@ void VideoDecoder::release() {
         AMediaCodec_delete(m_codec);
         m_codec = nullptr;
     }
-
     if (m_format) {
         AMediaFormat_delete(m_format);
         m_format = nullptr;
     }
-
     m_initialized = false;
     LOGI("Decoder released");
 }
