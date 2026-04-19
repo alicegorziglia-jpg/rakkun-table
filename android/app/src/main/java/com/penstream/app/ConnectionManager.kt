@@ -157,15 +157,15 @@ class ConnectionManager(
         val namePadded = ByteArray(32) { i -> nameBytes.getOrElse(i) { 0 } }
 
         return byteArrayOf(
-            0x50, 0x53, // MAGIC
-            0x01,       // VERSION
-            0x10,       // TYPE: CONNECT_REQ
-            0x00, 0x00, 0x00, 0x01, // SEQ
-            0x00, 0x00, 0x00, 0x00, // TIMESTAMP
-            *namePadded,            // Client name (32 bytes)
-            0x80, 0x07, // Max width (1920)
-            0x38, 0x04, // Max height (1080)
-            0x01        // Supported codecs (bitmask: 1=H264)
+            0x50.toByte(), 0x53.toByte(), // MAGIC
+            0x01.toByte(),                // VERSION
+            0x10.toByte(),                // TYPE: CONNECT_REQ
+            0x00, 0x00, 0x00, 0x01,      // SEQ
+            0x00, 0x00, 0x00, 0x00,      // TIMESTAMP
+            *namePadded,                  // Client name (32 bytes)
+            0x80.toByte(), 0x07,          // Max width (1920)
+            0x38.toByte(), 0x04,          // Max height (1080)
+            0x01                          // Supported codecs (bitmask: 1=H264)
         )
     }
 

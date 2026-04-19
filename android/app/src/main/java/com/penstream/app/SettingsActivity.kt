@@ -65,13 +65,13 @@ class SettingsActivity : AppCompatActivity(), SharedPreferences.OnSharedPreferen
         val quality = prefs.getString("quality", "High")
 
         binding.resolutionSpinner.setSelection(
-            (binding.resolutionSpinner.adapter as ArrayAdapter<*>).getPosition(resolution)
+            (binding.resolutionSpinner.adapter as ArrayAdapter<*>).getPosition(resolution.orEmpty())
         )
         binding.fpsSpinner.setSelection(
-            (binding.fpsSpinner.adapter as ArrayAdapter<*>).getPosition(fps)
+            (binding.fpsSpinner.adapter as ArrayAdapter<*>).getPosition(fps.orEmpty())
         )
         binding.qualitySpinner.setSelection(
-            (binding.qualitySpinner.adapter as ArrayAdapter<*>).getPosition(quality)
+            (binding.qualitySpinner.adapter as ArrayAdapter<*>).getPosition(quality.orEmpty())
         )
     }
 
