@@ -15,7 +15,7 @@ if(WIN32)
 endif()
 
 # Executable
-add_executable(penstream_server WIN32
+add_executable(penstream_server
     src/main.cpp
     src/capture/dxgi_capturer.cpp
     src/capture/frame_pool.cpp
@@ -29,12 +29,10 @@ add_executable(penstream_server WIN32
     src/config/config_loader.cpp
 )
 
-# Set subsystem to console for debug, windows for release
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    set_target_properties(penstream_server PROPERTIES
-        WIN32_EXECUTABLE FALSE
-    )
-endif()
+# Usar siempre subsistema consola (main en vez de WinMain)
+set_target_properties(penstream_server PROPERTIES
+    WIN32_EXECUTABLE FALSE
+)
 
 # Include directories
 target_include_directories(penstream_server PRIVATE
