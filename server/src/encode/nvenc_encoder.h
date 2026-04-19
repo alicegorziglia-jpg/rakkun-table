@@ -6,10 +6,12 @@
 #include <d3d11.h>
 #include <dxgi1_2.h>
 
+#ifdef ENABLE_NVENC
 // NVENC SDK includes - require NVIDIA Video Codec SDK
 // Download from: https://developer.nvidia.com/nvidia-video-codec-sdk
 // Add to path: $ENV{NVENC_SDK_PATH}/Interfaces
 #include <nvEncodeAPI.h>
+#endif
 
 namespace penstream::encode {
 
@@ -27,6 +29,7 @@ public:
     void set_d3d_device(ID3D11Device* device);
 
 private:
+#ifdef ENABLE_NVENC
     bool load_nvenc();
     bool create_encoder(const EncodeConfig& config);
     bool register_d3d11_resource();
@@ -49,6 +52,7 @@ private:
     // Encode state
     uint32_t m_sequence_num;
     bool m_need_keyframe;
+#endif
 };
 
 } // namespace penstream::encode

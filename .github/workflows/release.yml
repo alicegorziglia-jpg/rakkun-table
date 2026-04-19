@@ -81,10 +81,11 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Generate Gradle wrapper
+      - name: Download Gradle wrapper jar
         run: |
-          cd android
-          gradle wrapper --gradle-version=8.4
+          mkdir -p android/gradle/wrapper
+          curl -L -o android/gradle/wrapper/gradle-wrapper.jar \
+            "https://github.com/gradle/gradle/raw/v8.7.0/gradle/wrapper/gradle-wrapper.jar"
 
       - name: Decode keystore
         run: |

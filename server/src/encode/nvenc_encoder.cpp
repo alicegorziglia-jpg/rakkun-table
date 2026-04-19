@@ -4,6 +4,8 @@
 
 namespace penstream::encode {
 
+#ifdef ENABLE_NVENC
+
 NVEncoder::NVEncoder()
     : m_nvenc_lib(nullptr)
     , m_encoder(nullptr)
@@ -37,7 +39,6 @@ bool NVEncoder::initialize(const EncodeConfig& config) {
         return false;
     }
 
-    // Check NVENC version
     uint32_t version = 0;
     NVENCSTATUS status = m_nvenc.nvEncodeAPIGetMaxSupportedVersion(&version);
     if (status != NV_ENC_SUCCESS) {
@@ -97,11 +98,9 @@ bool NVEncoder::load_nvenc() {
 bool NVEncoder::create_encoder(const EncodeConfig& config) {
     if (!m_d3d_device) {
         spdlog::warn("D3D11 device not set yet - encoder will be created when device is available");
-        // Will be created later when set_d3d_device is called
         return true;
     }
 
-    // Get D3D11 device from DXGI capturer
     NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS session_params = {};
     session_params.version = NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS_VER;
     session_params.device = m_d3d_device;
@@ -116,7 +115,6 @@ bool NVEncoder::create_encoder(const EncodeConfig& config) {
     }
     m_encoder = encoder;
 
-    // Get encoder preset config
     NV_ENC_PRESET_CONFIG preset_config = {};
     preset_config.version = NV_ENC_PRESET_CONFIG_VER;
     preset_config.presetCfg.version = NV_ENC_CONFIG_VER;
@@ -124,14 +122,13 @@ bool NVEncoder::create_encoder(const EncodeConfig& config) {
     status = m_nvenc.nvEncGetEncodePresetConfig(
         m_encoder,
         NV_ENC_CODEC_H264_GUID,
-        NV_ENC_PRESET_P1_GUID, // Fast preset for low latency
+        NV_ENC_PRESET_P1_GUID,
         &preset_config
     );
     if (status != NV_ENC_SUCCESS) {
         spdlog::warn("Failed to get preset config, using defaults");
     }
 
-    // Configure encoder
     NV_ENC_INITIALIZE_PARAMS init_params = {};
     init_params.version = NV_ENC_INITIALIZE_PARAMS_VER;
     init_params.encodeGUID = NV_ENC_CODEC_H264_GUID;
@@ -143,26 +140,21 @@ bool NVEncoder::create_encoder(const EncodeConfig& config) {
     init_params.frameRateNum = config.fps;
     init_params.frameRateDen = 1;
     init_params.enablePTD = 1;
-    init_params.enableEncodeAsync = 0; // Sync encode for low latency
+    init_params.enableEncodeAsync = 0;
     init_params.tuningInfo = NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY;
     init_params.presetConfigPtr = &preset_config;
 
-    // H.264 specific config
     NV_ENC_CONFIG* encode_config = &init_params.encodeConfig;
     encode_config->version = NV_ENC_CONFIG_VER;
-    encode_config->gopLength = NV_ENC_INFINITE_GOPLENGTH; // All P-frames after first I-frame
-    encode_config->frameIntervalP = 1; // No B-frames
+    encode_config->gopLength = NV_ENC_INFINITE_GOPLENGTH;
+    encode_config->frameIntervalP = 1;
     encode_config->monoChromeEncoding = 0;
-
-    // Rate control
     encode_config->rcParams.version = NV_ENC_RC_PARAMS_VER;
     encode_config->rcParams.rateControlMode = NV_ENC_PARAMS_RC_CBR_LOWDELAY_HQ;
     encode_config->rcParams.zeroReorderDelay = 1;
     encode_config->rcParams.enableLookahead = 0;
     encode_config->rcParams.averageBitRate = config.bitrate_bps;
-    encode_config->rcParams.maxBitRate = config.bitrate_bps * 12 / 10; // 20% headroom
-
-    // H.264 profile
+    encode_config->rcParams.maxBitRate = config.bitrate_bps * 12 / 10;
     encode_config->profileGUID = NV_ENC_H264_PROFILE_HIGH_GUID;
 
     status = m_nvenc.nvEncInitializeEncoder(m_encoder, &init_params);
@@ -171,13 +163,12 @@ bool NVEncoder::create_encoder(const EncodeConfig& config) {
         return false;
     }
 
-    // Create input texture for D3D11 interop
     D3D11_TEXTURE2D_DESC tex_desc = {};
     tex_desc.Width = config.width;
     tex_desc.Height = config.height;
     tex_desc.MipLevels = 1;
     tex_desc.ArraySize = 1;
-    tex_desc.Format = DXGI_FORMAT_NV12; // NVENC native format
+    tex_desc.Format = DXGI_FORMAT_NV12;
     tex_desc.SampleDesc.Count = 1;
     tex_desc.Usage = D3D11_USAGE_DEFAULT;
     tex_desc.BindFlags = D3D11_BIND_RENDER_TARGET;
@@ -189,7 +180,6 @@ bool NVEncoder::create_encoder(const EncodeConfig& config) {
         return false;
     }
 
-    // Register texture with NVENC
     NV_ENC_REGISTER_RESOURCE register_res = {};
     register_res.version = NV_ENC_REGISTER_RESOURCE_VER;
     register_res.resourceType = NV_ENC_INPUT_RESOURCE_TYPE_DIRECTX;
@@ -214,7 +204,6 @@ bool NVEncoder::encode(const capture::Frame& frame, std::vector<uint8_t>& out_da
         return false;
     }
 
-    // If D3D device wasn't set during initialize, try now
     if (!m_input_texture && m_d3d_device) {
         if (!create_encoder({
             .width = m_width,
@@ -227,33 +216,24 @@ bool NVEncoder::encode(const capture::Frame& frame, std::vector<uint8_t>& out_da
         }
     }
 
-    // Copy frame data to input texture (BGRA -> NV12 conversion would happen here)
-    // For now, we assume DXGI capturer provides NV12 format
     if (m_input_texture && !frame.data.empty()) {
         ID3D11DeviceContext* context = nullptr;
         m_d3d_device->GetImmediateContext(&context);
         if (context) {
-            // Map frame data to texture
             D3D11_MAPPED_SUBRESOURCE mapped;
             HRESULT hr = context->Map(m_input_texture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
             if (SUCCEEDED(hr)) {
-                // Copy and convert BGRA to NV12
-                // This is a simplified copy - real implementation needs color space conversion
                 const uint8_t* src = frame.data.data();
                 uint8_t* dst = static_cast<uint8_t*>(mapped.pData);
-
-                // Simple copy for scaffolding (real impl: BGRA to NV12 conversion)
                 size_t copy_size = std::min(static_cast<size_t>(mapped.RowPitch * m_height),
                                            frame.data.size());
                 memcpy(dst, src, copy_size);
-
                 context->Unmap(m_input_texture, 0);
             }
             context->Release();
         }
     }
 
-    // Prepare encode params
     NV_ENC_PIC_PARAMS pic_params = {};
     pic_params.version = NV_ENC_PIC_PARAMS_VER;
     pic_params.inputBuffer = m_registered_resource;
@@ -268,20 +248,17 @@ bool NVEncoder::encode(const capture::Frame& frame, std::vector<uint8_t>& out_da
         m_need_keyframe = false;
     }
 
-    // Get output bitstream buffer
     NV_ENC_LOCK_BITSTREAM lock_params = {};
     lock_params.version = NV_ENC_LOCK_BITSTREAM_VER;
     lock_params.doNotWait = 0;
     lock_params.outputBitstream = m_nvenc.nvEncCreateBitstreamBuffer(m_encoder, nullptr);
 
-    // Encode frame
     NVENCSTATUS status = m_nvenc.nvEncEncodePicture(m_encoder, &pic_params);
     if (status != NV_ENC_SUCCESS) {
         spdlog::warn("nvEncEncodePicture failed: {}", status);
         return false;
     }
 
-    // Lock and copy output
     status = m_nvenc.nvEncLockBitstream(m_encoder, &lock_params);
     if (status == NV_ENC_SUCCESS) {
         out_data.resize(lock_params.bitstreamSizeInBytes);
@@ -299,24 +276,40 @@ void NVEncoder::shutdown() {
         m_nvenc.nvEncDestroyEncoder(m_encoder);
         m_encoder = nullptr;
     }
-
     if (m_registered_resource && m_nvenc.nvEncUnregisterResource) {
         m_nvenc.nvEncUnregisterResource(m_registered_resource);
         m_registered_resource = nullptr;
     }
-
     if (m_input_texture) {
         m_input_texture->Release();
         m_input_texture = nullptr;
     }
-
     if (m_nvenc_lib) {
         FreeLibrary(m_nvenc_lib);
         m_nvenc_lib = nullptr;
     }
-
     m_initialized = false;
     spdlog::info("NVENC encoder shutdown complete");
 }
+
+#else // ENABLE_NVENC not defined — stub implementation
+
+NVEncoder::NVEncoder() {}
+NVEncoder::~NVEncoder() {}
+void NVEncoder::set_d3d_device(ID3D11Device*) {}
+
+bool NVEncoder::initialize(const EncodeConfig&) {
+    spdlog::warn("NVENC support not compiled in (ENABLE_NVENC not defined). "
+                 "Build with NVENC SDK to enable hardware encoding.");
+    return false;
+}
+
+bool NVEncoder::encode(const capture::Frame&, std::vector<uint8_t>&) {
+    return false;
+}
+
+void NVEncoder::shutdown() {}
+
+#endif // ENABLE_NVENC
 
 } // namespace penstream::encode
