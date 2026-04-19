@@ -1,25 +1,27 @@
+#include <winsock2.h>   // debe ir ANTES de windows.h
 #include <windows.h>
 #include <iostream>
 #include <csignal>
+#include <atomic>
 #include <thread>
 #include <chrono>
 
 #include "config/config_loader.h"
 #include "capture/dxgi_capturer.h"
 #include "encode/nvenc_encoder.h"
+#include "encode/encoder_interface.h"
 #include "network/udp_transport.h"
 #include "input/input_handler.h"
 
 namespace penstream {
 
-volatile std::sigatomic_t g_running = 1;
+static std::atomic<bool> g_running{true};
 
-void signal_handler(int signal) {
-    g_running = 0;
+void signal_handler(int /*signal*/) {
+    g_running.store(false);
 }
 
 int run() {
-    // Cargar configuración
     auto config = config::load_config();
 
     std::cout << "========================================" << std::endl;
@@ -42,17 +44,15 @@ int run() {
     }
     std::cout << " OK (" << capturer.get_width() << "x" << capturer.get_height() << ")" << std::endl;
 
-    // Inicializar encoder NVENC
+    // Inicializar encoder
     encode::NVEncoder encoder;
-
-    // Pasar dispositivo D3D11 del capturer al encoder para interop
     encoder.set_d3d_device(capturer.get_device());
 
-    EncodeConfig encode_config;
-    encode_config.width = config.width;
-    encode_config.height = config.height;
+    encode::EncodeConfig encode_config;
+    encode_config.width      = config.width;
+    encode_config.height     = config.height;
     encode_config.bitrate_bps = config.bitrate_kbps * 1000;
-    encode_config.fps = config.fps;
+    encode_config.fps        = config.fps;
     encode_config.low_latency = config.low_latency;
 
     std::cout << "[2/4] Initializing NVENC encoder..." << std::flush;
@@ -66,7 +66,7 @@ int run() {
     std::cout << " OK" << std::endl;
 
     // Inicializar red UDP
-    network::UDPTransport transport(config.port);
+    network::UDPTransport transport(static_cast<uint16_t>(config.port));
     std::cout << "[3/4] Initializing UDP transport..." << std::flush;
     if (!transport.initialize()) {
         std::cerr << " FAILED" << std::endl;
@@ -91,31 +91,28 @@ int run() {
     std::cout << "Press Ctrl+C to stop." << std::endl;
     std::cout << "========================================" << std::endl;
 
-    // Main loop
     uint32_t frame_id = 0;
-    auto frame_interval = std::chrono::microseconds(1000000 / config.fps);
-    auto last_frame_time = std::chrono::steady_clock::now();
-    uint32_t frames_sent = 0;
-    auto stats_time = std::chrono::steady_clock::now();
+    auto frame_interval   = std::chrono::microseconds(1000000 / config.fps);
+    auto last_frame_time  = std::chrono::steady_clock::now();
+    uint32_t frames_sent  = 0;
+    auto stats_time       = std::chrono::steady_clock::now();
 
-    while (g_running) {
-        // Check for client connection
+    while (g_running.load()) {
         if (!transport.has_client()) {
-            // Listen for incoming connection requests
             std::vector<uint8_t> recv_buffer;
-            network::sockaddr_in client_addr;
+            sockaddr_in client_addr{};
 
             if (transport.receive(recv_buffer, client_addr, 100)) {
-                // Parse connection request
                 if (recv_buffer.size() >= 12) {
-                    // Validate magic
                     if (recv_buffer[0] == 0x50 && recv_buffer[1] == 0x53) {
                         uint8_t type = recv_buffer[2];
                         if (type == 0x10) { // CONNECT_REQ
                             std::cout << "Client connection request received" << std::endl;
                             transport.send_connect_response(
                                 client_addr, true,
-                                config.width, config.height, config.bitrate_kbps);
+                                static_cast<uint16_t>(config.width),
+                                static_cast<uint16_t>(config.height),
+                                static_cast<uint16_t>(config.bitrate_kbps));
                             std::cout << "Client connected!" << std::endl;
                         }
                     }
@@ -128,68 +125,63 @@ int run() {
             continue;
         }
 
-        auto now = std::chrono::steady_clock::now();
+        auto now     = std::chrono::steady_clock::now();
         auto elapsed = now - last_frame_time;
 
         if (elapsed >= frame_interval) {
-            // Capturar frame
             capture::Frame frame;
             if (capturer.capture_frame(frame)) {
-                // Encodear frame
                 std::vector<uint8_t> encoded_data;
                 if (encoder.encode(frame, encoded_data) && !encoded_data.empty()) {
-                    // Enviar por UDP
                     if (transport.send_video_frame(encoded_data, frame_id, frame.timestamp_us,
                                                    frame.width, frame.height)) {
                         frames_sent++;
                     }
                 }
             }
-
             frame_id++;
             last_frame_time = now;
         }
 
-        // Procesar inputs pendientes
         input_handler.process_pending_inputs();
 
-        // Check for incoming input packets
-        std::vector<uint8_t> recv_buffer;
-        network::sockaddr_in dummy_addr;
-        if (transport.receive(recv_buffer, dummy_addr, 0)) {
-            // Parse input packet
-            if (recv_buffer.size() >= sizeof(network::InputPacket)) {
-                const network::InputPacket* input =
-                    reinterpret_cast<const network::InputPacket*>(recv_buffer.data());
+        {
+            std::vector<uint8_t> recv_buffer;
+            sockaddr_in dummy_addr{};
+            if (transport.receive(recv_buffer, dummy_addr, 0)) {
+                if (recv_buffer.size() >= sizeof(network::InputPacket)) {
+                    const auto* input =
+                        reinterpret_cast<const network::InputPacket*>(recv_buffer.data());
 
-                if (input->header.type == 0x02) { // TOUCH_INPUT
-                    input::InputEvent event;
-                    event.x = input->x;
-                    event.y = input->y;
-                    event.pressure = input->pressure;
-                    event.tilt_x = input->tilt_x;
-                    event.tilt_y = input->tilt_y;
-                    event.buttons = input->buttons;
-                    event.timestamp = input->header.timestamp;
-
-                    input_handler.queue_input(event);
+                    if (input->header.type == 0x02) { // TOUCH_INPUT
+                        input::InputEvent event;
+                        event.x         = input->x;
+                        event.y         = input->y;
+                        event.pressure  = input->pressure;
+                        event.tilt_x    = input->tilt_x;
+                        event.tilt_y    = input->tilt_y;
+                        event.buttons   = input->buttons;
+                        event.timestamp = input->header.timestamp;
+                        input_handler.queue_input(event);
+                    }
                 }
             }
         }
 
-        // Print stats every 5 seconds
+        // Stats cada 5 segundos
         auto stats_elapsed = now - stats_time;
         if (std::chrono::duration_cast<std::chrono::seconds>(stats_elapsed).count() >= 5) {
-            auto fps = static_cast<float>(frames_sent) / stats_elapsed.count();
+            auto fps   = static_cast<float>(frames_sent) /
+                         static_cast<float>(
+                             std::chrono::duration_cast<std::chrono::seconds>(stats_elapsed).count());
             auto stats = transport.get_stats();
             std::cout << "Stats: " << fps << " fps | "
                       << stats.bytes_sent / 1024 << " KB sent | "
                       << stats.packets_received << " inputs received" << std::endl;
             frames_sent = 0;
-            stats_time = std::chrono::steady_clock::now();
+            stats_time  = std::chrono::steady_clock::now();
         }
 
-        // Small sleep to avoid busy waiting
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
@@ -199,12 +191,9 @@ int run() {
 
 } // namespace penstream
 
-int main(int argc, char* argv[]) {
-    std::signal(SIGINT, penstream::signal_handler);
+int main(int /*argc*/, char* /*argv*/[]) {
+    std::signal(SIGINT,  penstream::signal_handler);
     std::signal(SIGTERM, penstream::signal_handler);
-
-    // Set console output codepage to UTF-8
     SetConsoleOutputCP(CP_UTF8);
-
     return penstream::run();
 }

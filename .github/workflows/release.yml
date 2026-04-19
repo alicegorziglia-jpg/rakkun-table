@@ -81,6 +81,11 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Install CMake via SDK manager
+        run: |
+          sdkmanager "cmake;3.22.1"
+          echo "ANDROID_CMAKE_PATH=/usr/local/lib/android/sdk/cmake/3.22.1/bin" >> $GITHUB_ENV
+
       - name: Download Gradle wrapper jar
         run: |
           mkdir -p android/gradle/wrapper
