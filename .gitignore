@@ -8,6 +8,8 @@ build/
 .idea/
 *.suo
 *.user
+*.swp
+*.swo
 
 # Compiled files
 *.obj
@@ -21,17 +23,23 @@ build/
 # APK outputs
 *.apk
 *.aab
+
+# ─── KEYSTORES Y FIRMAS (NUNCA subir a Git) ───
 *.keystore
+*.jks
+keystore_b64.txt
+*_b64.txt
 
 # Logs
 *.log
 
-# Config (contains secrets)
-config.json
+# Config (puede contener datos sensibles)
+# config.json
 
 # OS files
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # vcpkg
 vcpkg_installed/
@@ -40,3 +48,8 @@ vcpkg_installed/
 *.iml
 .gradle/
 local.properties
+gradle-wrapper.jar
+
+# Python (si usas scripts)
+__pycache__/
+*.pyc
