@@ -50,7 +50,7 @@ jobs:
             "https://raw.githubusercontent.com/NVIDIA/video-codec-sdk/master/Interface",
             "https://raw.githubusercontent.com/NVIDIA/video-sdk-samples/master/Samples/NvCodec/NvEncoder"
           )
-          $headers = @("nvEncodeAPI.h", "cuviddec.h", "nvcuvid.h")
+          $headers = @("nvEncodeAPI.h") # Only NVENC header needed; cuviddec.h/nvcuvid.h are NVDECODE and unused
 
           foreach ($h in $headers) {
             $dest = "C:\nvenc-sdk\Interfaces\$h"
