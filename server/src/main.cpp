@@ -10,6 +10,7 @@
 #include "config/config_loader.h"
 #include "capture/dxgi_capturer.h"
 #include "encode/nvenc_encoder.h"
+#include "encode/mf_encoder.h"
 #include "encode/encoder_interface.h"
 #include "network/udp_transport.h"
 #include "input/input_handler.h"
@@ -156,36 +157,52 @@ int run() {
     std::cout << " OK (" << capturer.get_width() << "x" << capturer.get_height() << ")" << std::endl;
 
     // Inicializar encoder
-    encode::NVEncoder encoder;
-    encoder.set_d3d_device(capturer.get_device());
-
     encode::EncodeConfig encode_config;
-    encode_config.width      = config.width;
-    encode_config.height     = config.height;
+    encode_config.width       = config.width;
+    encode_config.height      = config.height;
     encode_config.bitrate_bps = config.bitrate_kbps * 1000;
-    encode_config.fps        = config.fps;
+    encode_config.fps         = config.fps;
     encode_config.low_latency = config.low_latency;
 
-    std::cout << "[2/4] Initializing NVENC encoder..." << std::flush;
-    if (!encoder.initialize(encode_config)) {
-        std::cerr << " FAILED" << std::endl;
-        std::cerr << "Error: Failed to initialize NVENC encoder" << std::endl;
-        std::cerr << "Possible causes:" << std::endl;
-        std::cerr << "  - No NVIDIA GPU detected" << std::endl;
-        std::cerr << "  - NVIDIA drivers not installed or outdated" << std::endl;
-        std::cerr << "  - NVENC SDK not installed" << std::endl;
-        std::cerr << "Note: Fallback to AMF (AMD) or QSV (Intel) not yet implemented." << std::endl;
-        update_tray_tip("PenStream Server - Error: Encoder failed");
-        MessageBoxA(NULL,
-            "Failed to initialize NVENC encoder.\n\n"
-            "Make sure you have:\n"
-            "  - An NVIDIA GPU (GTX 600 series or later)\n"
-            "  - Latest NVIDIA drivers installed\n"
-            "  - NVIDIA Video Codec SDK installed",
-            "PenStream Server Error", MB_OK | MB_ICONERROR);
-        return 1;
+    // Try hardware encoders first, fall back to MF software encoder
+    encode::NVEncoder  nvenc_encoder;
+    encode::MFEncoder  mf_encoder;
+    encode::NVEncoder* hw_encoder = nullptr;
+
+    nvenc_encoder.set_d3d_device(capturer.get_device());
+
+    std::cout << "[2/4] Initializing encoder..." << std::flush;
+
+    // Try NVENC (NVIDIA)
+    if (nvenc_encoder.initialize(encode_config)) {
+        hw_encoder = &nvenc_encoder;
+        std::cout << " OK (NVENC)" << std::endl;
+    } else {
+        std::cout << std::endl;
+        std::cout << "       NVENC unavailable, trying MF software encoder..." << std::flush;
+        if (mf_encoder.initialize(encode_config)) {
+            std::cout << " OK (Windows Media Foundation / software H.264)" << std::endl;
+        } else {
+            std::cerr << " FAILED" << std::endl;
+            std::cerr << "Error: No encoder available (NVENC and MF both failed)" << std::endl;
+            update_tray_tip("PenStream Server - Error: Encoder failed");
+            MessageBoxA(NULL,
+                "Failed to initialize any video encoder.\n\n"
+                "Tried:\n"
+                "  - NVENC (NVIDIA hardware encoder)\n"
+                "  - Windows Media Foundation software H.264\n\n"
+                "Make sure Windows Media Foundation is installed\n"
+                "(required: Windows 8 or later, Media Feature Pack on N editions).",
+                "PenStream Server Error", MB_OK | MB_ICONERROR);
+            return 1;
+        }
     }
-    std::cout << " OK" << std::endl;
+
+    // Unified encoder reference
+    auto do_encode = [&](const capture::Frame& frame, std::vector<uint8_t>& out) -> bool {
+        if (hw_encoder) return hw_encoder->encode(frame, out);
+        return mf_encoder.encode(frame, out);
+    };
 
     // Inicializar red UDP
     network::UDPTransport transport(static_cast<uint16_t>(config.port));
@@ -284,7 +301,7 @@ int run() {
             capture::Frame frame;
             if (capturer.capture_frame(frame)) {
                 std::vector<uint8_t> encoded_data;
-                if (encoder.encode(frame, encoded_data) && !encoded_data.empty()) {
+                if (do_encode(frame, encoded_data) && !encoded_data.empty()) {
                     if (transport.send_video_frame(encoded_data, frame_id, frame.timestamp_us,
                                                    frame.width, frame.height)) {
                         frames_sent++;

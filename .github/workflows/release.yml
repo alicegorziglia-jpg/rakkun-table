@@ -35,12 +35,22 @@ jobs:
         run: |
           C:\vcpkg\vcpkg install --triplet x64-windows-static
 
+      - name: Download NVENC SDK headers
+        shell: pwsh
+        run: |
+          # The Video Codec SDK headers are available in NVIDIA's public GitHub repo.
+          # Only the Interfaces/ headers are needed — the DLL is loaded at runtime
+          # from the user's NVIDIA driver installation (nvEncodeAPI64.dll).
+          git clone --depth 1 https://github.com/NVIDIA/video-codec-sdk.git C:\nvenc-sdk
+          echo "NVENC_SDK_PATH=C:\nvenc-sdk" | Out-File -Append -FilePath $env:GITHUB_ENV
+
       - name: Build Windows binary
         shell: pwsh
         run: |
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
             -DCMAKE_TOOLCHAIN_FILE="C:\vcpkg\scripts\buildsystems\vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET=x64-windows-static
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+            -DENABLE_NVENC=ON
           cmake --build build --config Release
 
       - name: Prepare Windows artifact

@@ -26,6 +26,7 @@ add_executable(penstream_server
     src/capture/frame_pool.cpp
     src/encode/nvenc_encoder.cpp
     src/encode/amf_encoder.cpp
+    src/encode/mf_encoder.cpp
     src/network/webrtc_server.cpp
     src/network/udp_transport.cpp
     src/network/packet_builder.cpp
@@ -56,23 +57,23 @@ target_link_libraries(penstream_server PRIVATE
     nlohmann_json::nlohmann_json
     d3d11
     dxgi
+    mf
+    mfplat
+    mfuuid
     user32
     ws2_32
 )
 
 # NVENC SDK (optional)
+# Only the header files are needed at compile time — the actual encoder
+# (nvEncodeAPI64.dll) is loaded at runtime from the user's NVIDIA driver.
 if(ENABLE_NVENC AND DEFINED ENV{NVENC_SDK_PATH})
     target_compile_definitions(penstream_server PRIVATE ENABLE_NVENC)
     target_include_directories(penstream_server PRIVATE
         $ENV{NVENC_SDK_PATH}/Interfaces
     )
-    target_link_directories(penstream_server PRIVATE
-        $ENV{NVENC_SDK_PATH}/Lib/x64
-    )
-    target_link_libraries(penstream_server PRIVATE
-        nvencodeapi
-    )
-    message(STATUS "NVENC support enabled")
+    # No link-time dependency: nvEncodeAPI64.dll is loaded via LoadLibraryA at runtime.
+    message(STATUS "NVENC support enabled (headers from $ENV{NVENC_SDK_PATH}/Interfaces)")
 elseif(ENABLE_NVENC)
     message(WARNING "NVENC_SDK_PATH not set - NVENC support disabled")
 endif()
