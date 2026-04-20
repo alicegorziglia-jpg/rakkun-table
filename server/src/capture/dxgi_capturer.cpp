@@ -106,7 +106,18 @@ bool DXGICapturer::create_duplication() {
     output1->Release();
 
     if (FAILED(hr)) {
-        spdlog::error("Failed to create duplication: 0x{:08X}", hr);
+        // Cast to uint32_t so spdlog/fmt formats it as a proper unsigned hex (e.g. 0x887A0004)
+        // instead of a signed negative (e.g. 0x-7785FFFC).
+        spdlog::error("Failed to create duplication: 0x{:08X}", static_cast<uint32_t>(hr));
+
+        // DXGI_ERROR_NOT_CURRENTLY_AVAILABLE (0x887A0004):
+        // Desktop Duplication API is unavailable in Remote Desktop / VM sessions
+        // and when another process holds an exclusive fullscreen surface.
+        if (hr == static_cast<HRESULT>(0x887A0004)) {
+            spdlog::error("DXGI_ERROR_NOT_CURRENTLY_AVAILABLE detected.");
+            spdlog::error("Likely cause: running over Remote Desktop (RDP) or inside a VM.");
+            spdlog::error("Desktop Duplication API requires a local, interactive desktop session.");
+        }
         return false;
     }
 
