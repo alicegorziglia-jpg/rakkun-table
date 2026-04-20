@@ -19,7 +19,7 @@ namespace penstream {
 static std::atomic<bool> g_running{true};
 static HWND g_hwnd_tray = nullptr;
 static UINT g_wm_trayicon = WM_USER + 1;
-static NOTIFYICONDATA g_nid = {};
+static NOTIFYICONDATAA g_nid = {};
 
 // IDs de menú
 #define ID_TRAY_START 1001
@@ -31,23 +31,23 @@ void signal_handler(int /*signal*/) {
 }
 
 void show_tray_icon(HWND hwnd) {
-    g_nid.cbSize = sizeof(NOTIFYICONDATA);
+    g_nid.cbSize = sizeof(NOTIFYICONDATAA);
     g_nid.hWnd = hwnd;
     g_nid.uID = 1;
     g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     g_nid.uCallbackMessage = g_wm_trayicon;
     g_nid.hIcon = LoadIcon(NULL, IDI_APPLICATION);
-    strcpy_s(g_nid.szTip, "PenStream Server - Starting...");
-    Shell_NotifyIcon(NIM_ADD, &g_nid);
+    strncpy_s(g_nid.szTip, "PenStream Server - Starting...", _TRUNCATE);
+    Shell_NotifyIconA(NIM_ADD, &g_nid);
 }
 
 void update_tray_tip(const char* tip) {
-    strcpy_s(g_nid.szTip, tip);
-    Shell_NotifyIcon(NIM_MODIFY, &g_nid);
+    strncpy_s(g_nid.szTip, tip, _TRUNCATE);
+    Shell_NotifyIconA(NIM_MODIFY, &g_nid);
 }
 
 void remove_tray_icon() {
-    Shell_NotifyIcon(NIM_DELETE, &g_nid);
+    Shell_NotifyIconA(NIM_DELETE, &g_nid);
 }
 
 void show_tray_menu(HWND hwnd) {
@@ -55,10 +55,10 @@ void show_tray_menu(HWND hwnd) {
     GetCursorPos(&pt);
 
     HMENU hmenu = CreatePopupMenu();
-    AppendMenu(hmenu, MF_STRING, ID_TRAY_START, "Start Streaming");
-    AppendMenu(hmenu, MF_STRING, ID_TRAY_STOP, "Stop Streaming");
-    AppendMenu(hmenu, MF_SEPARATOR, 0, NULL);
-    AppendMenu(hmenu, MF_STRING, ID_TRAY_EXIT, "Exit");
+    AppendMenuA(hmenu, MF_STRING, ID_TRAY_START, "Start Streaming");
+    AppendMenuA(hmenu, MF_STRING, ID_TRAY_STOP, "Stop Streaming");
+    AppendMenuA(hmenu, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(hmenu, MF_STRING, ID_TRAY_EXIT, "Exit");
 
     SetForegroundWindow(hwnd);
     TrackPopupMenu(hmenu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, NULL);
@@ -327,7 +327,7 @@ int run() {
 
             // Actualizar tray tip con stats
             char tip[128];
-            snprintf_s(tip, sizeof(tip), "PenStream - %.1f fps | %d inputs", fps, stats.packets_received);
+            _snprintf_s(tip, sizeof(tip), _TRUNCATE, "PenStream - %.1f fps | %d inputs", fps, stats.packets_received);
             update_tray_tip(tip);
 
             frames_sent = 0;
@@ -365,7 +365,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     int result = penstream::run();
 
     // Cleanup
-    remove_tray_icon();
+    penstream::remove_tray_icon();
     fclose(stdout);
     fclose(stderr);
     FreeConsole();
@@ -375,6 +375,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 // Fallback main para modo consola
 int main(int argc, char* argv[]) {
+    (void)argc; (void)argv;
     // Si se ejecuta desde consola, mostrar mensaje y mantener ventana abierta
     std::cout << "PenStream Server should run as a Windows application." << std::endl;
     std::cout << "If you see this, the GUI failed to initialize." << std::endl;
