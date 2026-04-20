@@ -78,7 +78,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: penstream-server
-          path: output/penstream_server.exe
+          path: output/penstream_server.zip
           if-no-files-found: error
 
   build-android:
