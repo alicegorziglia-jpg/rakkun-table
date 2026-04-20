@@ -38,24 +38,36 @@ jobs:
       - name: Download NVENC SDK headers
         shell: pwsh
         run: |
-          # Download NVENC SDK headers directly from NVIDIA's public GitHub repo
-          # using the GitHub API (no authentication required for public repos).
-          # Only the Interfaces/ headers are needed — the DLL is loaded at runtime
-          # from the user's NVIDIA driver installation (nvEncodeAPI64.dll).
+          # Download NVENC SDK headers directly from NVIDIA's public GitHub repo.
+          # No authentication required — raw.githubusercontent.com is fully public.
+          # CMakeLists.txt expects headers at $NVENC_SDK_PATH/Interfaces/, so we
+          # mirror that layout: C:\nvenc-sdk\Interfaces\nvEncodeAPI.h, etc.
+          # The DLL (nvEncodeAPI64.dll) is loaded at runtime from the user's driver.
           New-Item -ItemType Directory -Path "C:\nvenc-sdk\Interfaces" -Force | Out-Null
-          $baseUrl = "https://raw.githubusercontent.com/NVIDIA/video-codec-sdk/master/Interface"
-          $headers = @(
-            "nvEncodeAPI.h",
-            "cuviddec.h",
-            "nvcuvid.h"
+
+          # The canonical SDK repo uses "Interface" (no s); video-sdk-samples is the fallback.
+          $sources = @(
+            "https://raw.githubusercontent.com/NVIDIA/video-codec-sdk/master/Interface",
+            "https://raw.githubusercontent.com/NVIDIA/video-sdk-samples/master/Samples/NvCodec/NvEncoder"
           )
+          $headers = @("nvEncodeAPI.h", "cuviddec.h", "nvcuvid.h")
+
           foreach ($h in $headers) {
             $dest = "C:\nvenc-sdk\Interfaces\$h"
-            try {
-              Invoke-WebRequest -Uri "$baseUrl/$h" -OutFile $dest -UseBasicParsing
-              Write-Host "Downloaded: $h"
-            } catch {
-              Write-Warning "Could not download $h (may not exist in this SDK version): $_"
+            $downloaded = $false
+            foreach ($base in $sources) {
+              try {
+                Invoke-WebRequest -Uri "$base/$h" -OutFile $dest -UseBasicParsing -ErrorAction Stop
+                Write-Host "Downloaded $h from $base"
+                $downloaded = $true
+                break
+              } catch {
+                Write-Warning "Could not fetch $h from ${base}: $_"
+              }
+            }
+            if (-not $downloaded) {
+              Write-Error "$h not found in any source — aborting."
+              exit 1
             }
           }
           echo "NVENC_SDK_PATH=C:\nvenc-sdk" | Out-File -Append -FilePath $env:GITHUB_ENV
