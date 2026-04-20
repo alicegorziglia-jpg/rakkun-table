@@ -65,17 +65,17 @@ target_link_libraries(penstream_server PRIVATE
 )
 
 # NVENC SDK (optional)
-# Only the header files are needed at compile time — the actual encoder
-# (nvEncodeAPI64.dll) is loaded at runtime from the user's NVIDIA driver.
-if(ENABLE_NVENC AND DEFINED ENV{NVENC_SDK_PATH})
-    target_compile_definitions(penstream_server PRIVATE ENABLE_NVENC)
-    target_include_directories(penstream_server PRIVATE
-        $ENV{NVENC_SDK_PATH}/Interfaces
-    )
-    # No link-time dependency: nvEncodeAPI64.dll is loaded via LoadLibraryA at runtime.
-    message(STATUS "NVENC support enabled (headers from $ENV{NVENC_SDK_PATH}/Interfaces)")
-elseif(ENABLE_NVENC)
-    message(WARNING "NVENC_SDK_PATH not set - NVENC support disabled")
+# nvEncodeAPI.h is bundled in server/deps/nvenc/ — no external SDK download needed.
+# The actual encoder (nvEncodeAPI64.dll) is loaded at runtime from the user's driver.
+if(ENABLE_NVENC)
+    set(NVENC_HEADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/deps/nvenc")
+    if(EXISTS "${NVENC_HEADER_DIR}/nvEncodeAPI.h")
+        target_compile_definitions(penstream_server PRIVATE ENABLE_NVENC)
+        target_include_directories(penstream_server PRIVATE "${NVENC_HEADER_DIR}")
+        message(STATUS "NVENC support enabled (bundled header at ${NVENC_HEADER_DIR})")
+    else()
+        message(WARNING "NVENC enabled but deps/nvenc/nvEncodeAPI.h not found - NVENC disabled")
+    endif()
 endif()
 
 # AMF SDK (optional)

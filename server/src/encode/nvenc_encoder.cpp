@@ -39,23 +39,27 @@ bool NVEncoder::initialize(const EncodeConfig& config) {
         return false;
     }
 
-    uint32_t version = 0;
-    NVENCSTATUS status = m_nvenc.nvEncodeAPIGetMaxSupportedVersion(&version);
-    if (status != NV_ENC_SUCCESS) {
-        spdlog::error("Failed to get NVENC version");
-        return false;
+    // nvEncodeAPIGetMaxSupportedVersion is exported directly by nvEncodeAPI64.dll,
+    // not a member of the function pointer table — load it separately.
+    auto get_version = reinterpret_cast<PFN_NvEncodeAPIGetMaxSupportedVersion>(
+        GetProcAddress(m_nvenc_lib, "NvEncodeAPIGetMaxSupportedVersion"));
+    if (get_version) {
+        uint32_t version = 0;
+        if (get_version(&version) == NV_ENC_SUCCESS) {
+            spdlog::info("NVENC API max supported version: {}.{}",
+                         (version >> 4) & 0xFF, version & 0xF);
+        }
     }
-    spdlog::info("NVENC API version: {}.{}", (version >> 4) & 0xFF, version & 0xF);
 
     if (!create_encoder(config)) {
         spdlog::error("Failed to create NVENC encoder");
         return false;
     }
 
-    m_width = config.width;
-    m_height = config.height;
-    m_fps = config.fps;
-    m_bitrate = config.bitrate_bps;
+    m_width      = config.width;
+    m_height     = config.height;
+    m_fps        = config.fps;
+    m_bitrate    = config.bitrate_bps;
     m_low_latency = config.low_latency;
     m_initialized = true;
 
@@ -85,7 +89,7 @@ bool NVEncoder::load_nvenc() {
     m_nvenc.version = NV_ENCODE_API_FUNCTION_LIST_VER;
     NVENCSTATUS status = create_instance(&m_nvenc);
     if (status != NV_ENC_SUCCESS) {
-        spdlog::error("NvEncodeAPICreateInstance failed: {}", status);
+        spdlog::error("NvEncodeAPICreateInstance failed: {}", static_cast<int>(status));
         FreeLibrary(m_nvenc_lib);
         m_nvenc_lib = nullptr;
         return false;
@@ -102,95 +106,97 @@ bool NVEncoder::create_encoder(const EncodeConfig& config) {
     }
 
     NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS session_params = {};
-    session_params.version = NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS_VER;
-    session_params.device = m_d3d_device;
+    session_params.version    = NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS_VER;
+    session_params.device     = m_d3d_device;
     session_params.deviceType = NV_ENC_DEVICE_TYPE_DIRECTX;
     session_params.apiVersion = NVENCAPI_VERSION;
 
     void* encoder = nullptr;
     NVENCSTATUS status = m_nvenc.nvEncOpenEncodeSessionEx(&session_params, &encoder);
     if (status != NV_ENC_SUCCESS) {
-        spdlog::error("nvEncOpenEncodeSessionEx failed: {}", status);
+        spdlog::error("nvEncOpenEncodeSessionEx failed: {}", static_cast<int>(status));
         return false;
     }
     m_encoder = encoder;
 
     NV_ENC_PRESET_CONFIG preset_config = {};
-    preset_config.version = NV_ENC_PRESET_CONFIG_VER;
-    preset_config.presetCfg.version = NV_ENC_CONFIG_VER;
+    preset_config.version            = NV_ENC_PRESET_CONFIG_VER;
+    preset_config.presetCfg.version  = NV_ENC_CONFIG_VER;
 
     status = m_nvenc.nvEncGetEncodePresetConfig(
         m_encoder,
         NV_ENC_CODEC_H264_GUID,
         NV_ENC_PRESET_P1_GUID,
-        &preset_config
-    );
+        &preset_config);
     if (status != NV_ENC_SUCCESS) {
         spdlog::warn("Failed to get preset config, using defaults");
     }
 
-    NV_ENC_INITIALIZE_PARAMS init_params = {};
-    init_params.version = NV_ENC_INITIALIZE_PARAMS_VER;
-    init_params.encodeGUID = NV_ENC_CODEC_H264_GUID;
-    init_params.presetGUID = NV_ENC_PRESET_P1_GUID;
-    init_params.encodeWidth = config.width;
-    init_params.encodeHeight = config.height;
-    init_params.darWidth = config.width;
-    init_params.darHeight = config.height;
-    init_params.frameRateNum = config.fps;
-    init_params.frameRateDen = 1;
-    init_params.enablePTD = 1;
-    init_params.enableEncodeAsync = 0;
-    init_params.tuningInfo = NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY;
-    init_params.presetConfigPtr = &preset_config;
+    // Embed encode config inline — do not point at a local NV_ENC_CONFIG separately.
+    // NV_ENC_INITIALIZE_PARAMS::encodeConfig must point to a valid NV_ENC_CONFIG.
+    // We use the one fetched from the preset and let initParams own it.
+    NV_ENC_CONFIG encode_config          = preset_config.presetCfg;
+    encode_config.version                = NV_ENC_CONFIG_VER;
+    encode_config.gopLength              = NV_ENC_INFINITE_GOPLENGTH;
+    encode_config.frameIntervalP         = 1;
+    encode_config.monoChromeEncoding     = 0;
+    encode_config.profileGUID            = NV_ENC_H264_PROFILE_HIGH_GUID;
+    encode_config.rcParams.version       = NV_ENC_RC_PARAMS_VER;
+    encode_config.rcParams.rateControlMode  = NV_ENC_PARAMS_RC_CBR_LOWDELAY_HQ;
+    encode_config.rcParams.zeroReorderDelay = 1;
+    encode_config.rcParams.enableLookahead  = 0;
+    encode_config.rcParams.averageBitRate   = config.bitrate_bps;
+    encode_config.rcParams.maxBitRate       = config.bitrate_bps * 12 / 10;
 
-    NV_ENC_CONFIG* encode_config = &init_params.encodeConfig;
-    encode_config->version = NV_ENC_CONFIG_VER;
-    encode_config->gopLength = NV_ENC_INFINITE_GOPLENGTH;
-    encode_config->frameIntervalP = 1;
-    encode_config->monoChromeEncoding = 0;
-    encode_config->rcParams.version = NV_ENC_RC_PARAMS_VER;
-    encode_config->rcParams.rateControlMode = NV_ENC_PARAMS_RC_CBR_LOWDELAY_HQ;
-    encode_config->rcParams.zeroReorderDelay = 1;
-    encode_config->rcParams.enableLookahead = 0;
-    encode_config->rcParams.averageBitRate = config.bitrate_bps;
-    encode_config->rcParams.maxBitRate = config.bitrate_bps * 12 / 10;
-    encode_config->profileGUID = NV_ENC_H264_PROFILE_HIGH_GUID;
+    NV_ENC_INITIALIZE_PARAMS init_params = {};
+    init_params.version          = NV_ENC_INITIALIZE_PARAMS_VER;
+    init_params.encodeGUID       = NV_ENC_CODEC_H264_GUID;
+    init_params.presetGUID       = NV_ENC_PRESET_P1_GUID;
+    init_params.encodeWidth      = config.width;
+    init_params.encodeHeight     = config.height;
+    init_params.darWidth         = config.width;
+    init_params.darHeight        = config.height;
+    init_params.frameRateNum     = config.fps;
+    init_params.frameRateDen     = 1;
+    init_params.enablePTD        = 1;
+    init_params.enableEncodeAsync = 0;
+    init_params.tuningInfo       = NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY;
+    init_params.encodeConfig     = &encode_config;   // single pointer, not double-pointer
 
     status = m_nvenc.nvEncInitializeEncoder(m_encoder, &init_params);
     if (status != NV_ENC_SUCCESS) {
-        spdlog::error("nvEncInitializeEncoder failed: {}", status);
+        spdlog::error("nvEncInitializeEncoder failed: {}", static_cast<int>(status));
         return false;
     }
 
     D3D11_TEXTURE2D_DESC tex_desc = {};
-    tex_desc.Width = config.width;
-    tex_desc.Height = config.height;
-    tex_desc.MipLevels = 1;
-    tex_desc.ArraySize = 1;
-    tex_desc.Format = DXGI_FORMAT_NV12;
+    tex_desc.Width            = config.width;
+    tex_desc.Height           = config.height;
+    tex_desc.MipLevels        = 1;
+    tex_desc.ArraySize        = 1;
+    tex_desc.Format           = DXGI_FORMAT_NV12;
     tex_desc.SampleDesc.Count = 1;
-    tex_desc.Usage = D3D11_USAGE_DEFAULT;
-    tex_desc.BindFlags = D3D11_BIND_RENDER_TARGET;
-    tex_desc.CPUAccessFlags = 0;
+    tex_desc.Usage            = D3D11_USAGE_DEFAULT;
+    tex_desc.BindFlags        = D3D11_BIND_RENDER_TARGET;
+    tex_desc.CPUAccessFlags   = 0;
 
     HRESULT hr = m_d3d_device->CreateTexture2D(&tex_desc, nullptr, &m_input_texture);
     if (FAILED(hr)) {
-        spdlog::error("Failed to create input texture: 0x{:08X}", hr);
+        spdlog::error("Failed to create input texture: 0x{:08X}", static_cast<uint32_t>(hr));
         return false;
     }
 
     NV_ENC_REGISTER_RESOURCE register_res = {};
-    register_res.version = NV_ENC_REGISTER_RESOURCE_VER;
-    register_res.resourceType = NV_ENC_INPUT_RESOURCE_TYPE_DIRECTX;
+    register_res.version            = NV_ENC_REGISTER_RESOURCE_VER;
+    register_res.resourceType       = NV_ENC_INPUT_RESOURCE_TYPE_DIRECTX;
     register_res.resourceToRegister = m_input_texture;
-    register_res.width = config.width;
-    register_res.height = config.height;
-    register_res.bufferFormat = NV_ENC_BUFFER_FORMAT_NV12;
+    register_res.width              = config.width;
+    register_res.height             = config.height;
+    register_res.bufferFormat       = NV_ENC_BUFFER_FORMAT_NV12;
 
     status = m_nvenc.nvEncRegisterResource(m_encoder, &register_res);
     if (status != NV_ENC_SUCCESS) {
-        spdlog::error("nvEncRegisterResource failed: {}", status);
+        spdlog::error("nvEncRegisterResource failed: {}", static_cast<int>(status));
         return false;
     }
     m_registered_resource = register_res.registeredResource;
@@ -206,10 +212,10 @@ bool NVEncoder::encode(const capture::Frame& frame, std::vector<uint8_t>& out_da
 
     if (!m_input_texture && m_d3d_device) {
         if (!create_encoder({
-            .width = m_width,
-            .height = m_height,
+            .width       = m_width,
+            .height      = m_height,
             .bitrate_bps = m_bitrate,
-            .fps = m_fps,
+            .fps         = m_fps,
             .low_latency = m_low_latency
         })) {
             return false;
@@ -223,10 +229,10 @@ bool NVEncoder::encode(const capture::Frame& frame, std::vector<uint8_t>& out_da
             D3D11_MAPPED_SUBRESOURCE mapped;
             HRESULT hr = context->Map(m_input_texture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
             if (SUCCEEDED(hr)) {
-                const uint8_t* src = frame.data.data();
-                uint8_t* dst = static_cast<uint8_t*>(mapped.pData);
+                const uint8_t* src  = frame.data.data();
+                uint8_t*       dst  = static_cast<uint8_t*>(mapped.pData);
                 size_t copy_size = std::min(static_cast<size_t>(mapped.RowPitch * m_height),
-                                           frame.data.size());
+                                            frame.data.size());
                 memcpy(dst, src, copy_size);
                 context->Unmap(m_input_texture, 0);
             }
@@ -234,30 +240,41 @@ bool NVEncoder::encode(const capture::Frame& frame, std::vector<uint8_t>& out_da
         }
     }
 
-    NV_ENC_PIC_PARAMS pic_params = {};
-    pic_params.version = NV_ENC_PIC_PARAMS_VER;
-    pic_params.inputBuffer = m_registered_resource;
-    pic_params.bufferFmt = NV_ENC_BUFFER_FORMAT_NV12;
-    pic_params.inputWidth = m_width;
-    pic_params.inputHeight = m_height;
-    pic_params.pictureStruct = NV_ENC_PIC_STRUCT_FRAME;
-    pic_params.encodePicFlags = 0;
+    // Create a bitstream buffer for this frame
+    NV_ENC_CREATE_BITSTREAM_BUFFER bs_buf = {};
+    bs_buf.version = NV_ENC_CREATE_BITSTREAM_BUFFER_VER;
+    NVENCSTATUS status = m_nvenc.nvEncCreateBitstreamBuffer(m_encoder, &bs_buf);
+    if (status != NV_ENC_SUCCESS) {
+        spdlog::warn("nvEncCreateBitstreamBuffer failed: {}", static_cast<int>(status));
+        return false;
+    }
+
+    NV_ENC_PIC_PARAMS pic_params    = {};
+    pic_params.version              = NV_ENC_PIC_PARAMS_VER;
+    pic_params.inputBuffer          = m_registered_resource;
+    pic_params.bufferFmt            = NV_ENC_BUFFER_FORMAT_NV12;
+    pic_params.inputWidth           = m_width;
+    pic_params.inputHeight          = m_height;
+    pic_params.pictureStruct        = NV_ENC_PIC_STRUCT_FRAME;
+    pic_params.outputBitstream      = bs_buf.bitstreamBuffer;
+    pic_params.encodePicFlags       = 0;
 
     if (m_need_keyframe) {
         pic_params.encodePicFlags = NV_ENC_PIC_FLAG_FORCEIDR;
         m_need_keyframe = false;
     }
 
-    NV_ENC_LOCK_BITSTREAM lock_params = {};
-    lock_params.version = NV_ENC_LOCK_BITSTREAM_VER;
-    lock_params.doNotWait = 0;
-    lock_params.outputBitstream = m_nvenc.nvEncCreateBitstreamBuffer(m_encoder, nullptr);
-
-    NVENCSTATUS status = m_nvenc.nvEncEncodePicture(m_encoder, &pic_params);
+    status = m_nvenc.nvEncEncodePicture(m_encoder, &pic_params);
     if (status != NV_ENC_SUCCESS) {
-        spdlog::warn("nvEncEncodePicture failed: {}", status);
+        spdlog::warn("nvEncEncodePicture failed: {}", static_cast<int>(status));
+        m_nvenc.nvEncDestroyBitstreamBuffer(m_encoder, bs_buf.bitstreamBuffer);
         return false;
     }
+
+    NV_ENC_LOCK_BITSTREAM lock_params = {};
+    lock_params.version         = NV_ENC_LOCK_BITSTREAM_VER;
+    lock_params.doNotWait       = 0;
+    lock_params.outputBitstream = bs_buf.bitstreamBuffer;
 
     status = m_nvenc.nvEncLockBitstream(m_encoder, &lock_params);
     if (status == NV_ENC_SUCCESS) {
@@ -265,20 +282,20 @@ bool NVEncoder::encode(const capture::Frame& frame, std::vector<uint8_t>& out_da
         memcpy(out_data.data(), lock_params.bitstreamBufferPtr, lock_params.bitstreamSizeInBytes);
         m_nvenc.nvEncUnlockBitstream(m_encoder, lock_params.outputBitstream);
         m_sequence_num++;
-        return true;
     }
 
-    return false;
+    m_nvenc.nvEncDestroyBitstreamBuffer(m_encoder, bs_buf.bitstreamBuffer);
+    return status == NV_ENC_SUCCESS;
 }
 
 void NVEncoder::shutdown() {
     if (m_encoder && m_nvenc.nvEncDestroyEncoder) {
+        if (m_registered_resource && m_nvenc.nvEncUnregisterResource) {
+            m_nvenc.nvEncUnregisterResource(m_encoder, m_registered_resource);
+            m_registered_resource = nullptr;
+        }
         m_nvenc.nvEncDestroyEncoder(m_encoder);
         m_encoder = nullptr;
-    }
-    if (m_registered_resource && m_nvenc.nvEncUnregisterResource) {
-        m_nvenc.nvEncUnregisterResource(m_registered_resource);
-        m_registered_resource = nullptr;
     }
     if (m_input_texture) {
         m_input_texture->Release();
