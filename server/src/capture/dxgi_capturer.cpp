@@ -19,11 +19,132 @@ DXGICapturer::~DXGICapturer() {
 }
 
 bool DXGICapturer::initialize() {
-    if (!create_device()) {
+    // On hybrid-GPU systems (NVIDIA Optimus, AMD hybrid) D3D11CreateDevice(nullptr,...)
+    // may create the device on the iGPU while the desktop output belongs to the dGPU.
+    // DuplicateOutput requires that the device and the output share the same adapter.
+    // We therefore enumerate every adapter/output pair and try each one until we find
+    // a combination that succeeds with DuplicateOutput.
+
+    IDXGIFactory1* factory = nullptr;
+    HRESULT hr = CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&factory));
+    if (FAILED(hr)) {
+        spdlog::error("CreateDXGIFactory1 failed: 0x{:08X}", static_cast<uint32_t>(hr));
         return false;
     }
 
-    if (!create_duplication()) {
+    D3D_FEATURE_LEVEL feature_levels[] = {
+        D3D_FEATURE_LEVEL_11_1,
+        D3D_FEATURE_LEVEL_11_0,
+        D3D_FEATURE_LEVEL_10_1,
+        D3D_FEATURE_LEVEL_10_0,
+    };
+
+    bool found = false;
+    for (UINT adapterIdx = 0; !found; ++adapterIdx) {
+        IDXGIAdapter1* adapter = nullptr;
+        if (factory->EnumAdapters1(adapterIdx, &adapter) == DXGI_ERROR_NOT_FOUND) {
+            break; // No more adapters
+        }
+
+        DXGI_ADAPTER_DESC1 adapterDesc;
+        adapter->GetDesc1(&adapterDesc);
+
+        // Skip Microsoft Basic Render Driver (software fallback)
+        if (adapterDesc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) {
+            adapter->Release();
+            continue;
+        }
+
+        // Try to create D3D11 device on this specific adapter
+        ID3D11Device*        device  = nullptr;
+        ID3D11DeviceContext* context = nullptr;
+        hr = D3D11CreateDevice(
+            adapter,
+            D3D_DRIVER_TYPE_UNKNOWN, // must be UNKNOWN when an explicit adapter is given
+            nullptr,
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            feature_levels,
+            ARRAYSIZE(feature_levels),
+            D3D11_SDK_VERSION,
+            &device,
+            nullptr,
+            &context
+        );
+
+        if (FAILED(hr)) {
+            spdlog::warn("D3D11CreateDevice failed on adapter {}: 0x{:08X}", adapterIdx,
+                         static_cast<uint32_t>(hr));
+            adapter->Release();
+            continue;
+        }
+
+        // Enumerate outputs on this adapter
+        for (UINT outputIdx = 0; ; ++outputIdx) {
+            IDXGIOutput* output = nullptr;
+            if (adapter->EnumOutputs(outputIdx, &output) == DXGI_ERROR_NOT_FOUND) {
+                break;
+            }
+
+            IDXGIOutput1* output1 = nullptr;
+            if (FAILED(output->QueryInterface(__uuidof(IDXGIOutput1),
+                                              reinterpret_cast<void**>(&output1)))) {
+                output->Release();
+                continue;
+            }
+
+            DXGI_OUTPUT_DESC desc;
+            output1->GetDesc(&desc);
+
+            // Skip outputs not attached to the desktop (e.g. disconnected monitors)
+            if (!desc.AttachedToDesktop) {
+                output1->Release();
+                output->Release();
+                continue;
+            }
+
+            IDXGIOutputDuplication* duplication = nullptr;
+            hr = output1->DuplicateOutput(device, &duplication);
+            output1->Release();
+            output->Release();
+
+            if (SUCCEEDED(hr)) {
+                spdlog::info("Using adapter {} output {}", adapterIdx, outputIdx);
+                m_device      = device;
+                m_context     = context;
+                m_duplication = duplication;
+                m_width  = static_cast<uint32_t>(desc.DesktopCoordinates.right  - desc.DesktopCoordinates.left);
+                m_height = static_cast<uint32_t>(desc.DesktopCoordinates.bottom - desc.DesktopCoordinates.top);
+                found = true;
+                break;
+            }
+
+            spdlog::warn("DuplicateOutput failed on adapter {} output {}: 0x{:08X}",
+                         adapterIdx, outputIdx, static_cast<uint32_t>(hr));
+
+            if (hr == static_cast<HRESULT>(0x887A0004)) { // DXGI_ERROR_NOT_CURRENTLY_AVAILABLE
+                spdlog::error("DXGI_ERROR_NOT_CURRENTLY_AVAILABLE — possible causes:");
+                spdlog::error("  - Running over Remote Desktop (RDP)");
+                spdlog::error("  - Running inside a VM without GPU passthrough");
+                spdlog::error("  - Another process holds an exclusive fullscreen surface");
+            }
+        }
+
+        if (!found) {
+            device->Release();
+            context->Release();
+        }
+        adapter->Release();
+    }
+
+    factory->Release();
+
+    if (!found) {
+        spdlog::error("No adapter/output combination succeeded with DuplicateOutput.");
+        return false;
+    }
+
+    // Create staging texture for CPU readback
+    if (!create_staging_texture()) {
         return false;
     }
 
@@ -32,96 +153,13 @@ bool DXGICapturer::initialize() {
     return true;
 }
 
-bool DXGICapturer::create_device() {
-    D3D_FEATURE_LEVEL feature_levels[] = {
-        D3D_FEATURE_LEVEL_11_1,
-        D3D_FEATURE_LEVEL_11_0,
-        D3D_FEATURE_LEVEL_10_1,
-        D3D_FEATURE_LEVEL_10_0,
-    };
+// Kept for API compatibility — logic is now inlined in initialize().
+bool DXGICapturer::create_device() { return true; }
 
-    HRESULT hr = D3D11CreateDevice(
-        nullptr,
-        D3D_DRIVER_TYPE_HARDWARE,
-        nullptr,
-        D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-        feature_levels,
-        ARRAYSIZE(feature_levels),
-        D3D11_SDK_VERSION,
-        &m_device,
-        nullptr,
-        &m_context
-    );
+bool DXGICapturer::create_duplication() { return true; }
 
-    if (FAILED(hr)) {
-        spdlog::error("Failed to create D3D11 device: 0x{:08X}", hr);
-        return false;
-    }
+bool DXGICapturer::create_staging_texture() {
 
-    return true;
-}
-
-bool DXGICapturer::create_duplication() {
-    IDXGIDevice* dxgi_device = nullptr;
-    HRESULT hr = m_device->QueryInterface(__uuidof(IDXGIDevice), reinterpret_cast<void**>(&dxgi_device));
-
-    if (FAILED(hr)) {
-        spdlog::error("Failed to get IDXGIDevice");
-        return false;
-    }
-
-    IDXGIAdapter* adapter = nullptr;
-    hr = dxgi_device->GetAdapter(&adapter);
-    dxgi_device->Release();
-
-    if (FAILED(hr)) {
-        spdlog::error("Failed to get adapter");
-        return false;
-    }
-
-    IDXGIOutput* output = nullptr;
-    hr = adapter->EnumOutputs(0, &output);
-    adapter->Release();
-
-    if (FAILED(hr)) {
-        spdlog::error("Failed to enum outputs");
-        return false;
-    }
-
-    IDXGIOutput1* output1 = nullptr;
-    hr = output->QueryInterface(__uuidof(IDXGIOutput1), reinterpret_cast<void**>(&output1));
-    output->Release();
-
-    if (FAILED(hr)) {
-        spdlog::error("Failed to get IDXGIOutput1");
-        return false;
-    }
-
-    DXGI_OUTPUT_DESC desc;
-    output1->GetDesc(&desc);
-    m_width = desc.DesktopCoordinates.right - desc.DesktopCoordinates.left;
-    m_height = desc.DesktopCoordinates.bottom - desc.DesktopCoordinates.top;
-
-    hr = output1->DuplicateOutput(m_device, &m_duplication);
-    output1->Release();
-
-    if (FAILED(hr)) {
-        // Cast to uint32_t so spdlog/fmt formats it as a proper unsigned hex (e.g. 0x887A0004)
-        // instead of a signed negative (e.g. 0x-7785FFFC).
-        spdlog::error("Failed to create duplication: 0x{:08X}", static_cast<uint32_t>(hr));
-
-        // DXGI_ERROR_NOT_CURRENTLY_AVAILABLE (0x887A0004):
-        // Desktop Duplication API is unavailable in Remote Desktop / VM sessions
-        // and when another process holds an exclusive fullscreen surface.
-        if (hr == static_cast<HRESULT>(0x887A0004)) {
-            spdlog::error("DXGI_ERROR_NOT_CURRENTLY_AVAILABLE detected.");
-            spdlog::error("Likely cause: running over Remote Desktop (RDP) or inside a VM.");
-            spdlog::error("Desktop Duplication API requires a local, interactive desktop session.");
-        }
-        return false;
-    }
-
-    // Crear staging texture para CPU access
     D3D11_TEXTURE2D_DESC staging_desc = {};
     staging_desc.Width = m_width;
     staging_desc.Height = m_height;
@@ -132,9 +170,9 @@ bool DXGICapturer::create_duplication() {
     staging_desc.Usage = D3D11_USAGE_STAGING;
     staging_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
 
-    hr = m_device->CreateTexture2D(&staging_desc, nullptr, &m_staging_texture);
+    HRESULT hr = m_device->CreateTexture2D(&staging_desc, nullptr, &m_staging_texture);
     if (FAILED(hr)) {
-        spdlog::error("Failed to create staging texture: 0x{:08X}", hr);
+        spdlog::error("Failed to create staging texture: 0x{:08X}", static_cast<uint32_t>(hr));
         return false;
     }
 

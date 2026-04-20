@@ -32,6 +32,7 @@ public:
 private:
     bool create_device();
     bool create_duplication();
+    bool create_staging_texture();
 
     ID3D11Device* m_device;
     ID3D11DeviceContext* m_context;
