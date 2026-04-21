@@ -267,16 +267,30 @@ int run() {
             if (transport.receive(recv_buffer, client_addr, 100)) {
                 if (recv_buffer.size() >= 12) {
                     if (recv_buffer[0] == 0x50 && recv_buffer[1] == 0x53) {
-                        uint8_t type = recv_buffer[2];
+                        // Header layout: MAGIC[0-1] | VERSION[2] | TYPE[3] | SEQ[4-7] | TS[8-11]
+                        uint8_t type = recv_buffer[3]; // FIX: type is at index 3, not 2
                         if (type == 0x10) { // CONNECT_REQ
                             std::cout << "Client connection request received" << std::endl;
                             transport.send_connect_response(
                                 client_addr, true,
                                 static_cast<uint16_t>(config.width),
                                 static_cast<uint16_t>(config.height),
-                                static_cast<uint16_t>(config.bitrate_kbps));
+                                static_cast<uint32_t>(config.bitrate_kbps));
                             std::cout << "Client connected!" << std::endl;
                             update_tray_tip("PenStream Server - Client connected!");
+                        } else if (type == 0x03) { // HEARTBEAT - used for auto-discovery
+                            // Respond with server info so the app can find us on the network.
+                            // We use send_to directly to avoid marking the client as connected yet
+                            // (the real connection happens when a CONNECT_REQ arrives).
+                            auto discovery_resp = network::PacketBuilder::build_connect_response(
+                                0, true,
+                                static_cast<uint16_t>(config.width),
+                                static_cast<uint16_t>(config.height),
+                                0x01,
+                                static_cast<uint32_t>(config.bitrate_kbps));
+                            transport.send_to(client_addr, discovery_resp);
+                            std::cout << "Discovery probe answered to "
+                                      << inet_ntoa(client_addr.sin_addr) << std::endl;
                         }
                     }
                 }
