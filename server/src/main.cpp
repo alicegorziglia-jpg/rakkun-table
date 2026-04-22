@@ -265,6 +265,8 @@ int run() {
     update_tray_tip("PenStream Server - Waiting for client...");
 
     uint32_t frame_id = 0;
+    // Discovery broadcasting timer: periodically broadcast server presence on LAN
+    static auto last_discovery = std::chrono::steady_clock::now();
     auto frame_interval   = std::chrono::microseconds(1000000 / config.fps);
     auto last_frame_time  = std::chrono::steady_clock::now();
     uint32_t frames_sent  = 0;
@@ -272,6 +274,15 @@ int run() {
     bool was_connected = false;
 
     while (g_running.load()) {
+        // Periodic LAN discovery broadcast when no client is connected
+        auto now_loop = std::chrono::steady_clock::now();
+        if (!transport.has_client()) {
+            if (now_loop - last_discovery > std::chrono::seconds(2)) {
+                // Broadcast presence on the LAN to help APK discover the server
+                transport.broadcast_discovery(static_cast<uint16_t>(config.port));
+                last_discovery = now_loop;
+            }
+        }
         // Process Windows messages
         MSG msg;
         while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
