@@ -283,19 +283,34 @@ int run() {
             sockaddr_in client_addr{};
 
             if (transport.receive(recv_buffer, client_addr, 100)) {
-                if (recv_buffer.size() >= 12) {
-                    if (recv_buffer[0] == 0x50 && recv_buffer[1] == 0x53) {
-                        uint8_t type = recv_buffer[2];
-                        if (type == 0x10) { // CONNECT_REQ
-                            std::cout << "Client connection request received" << std::endl;
-                            transport.send_connect_response(
-                                client_addr, true,
-                                static_cast<uint16_t>(config.width),
-                                static_cast<uint16_t>(config.height),
-                                static_cast<uint16_t>(config.bitrate_kbps));
-                            std::cout << "Client connected!" << std::endl;
-                            update_tray_tip("PenStream Server - Client connected!");
-                        }
+                // PacketHeader: magic(2) + version(1) + type(1) + seq(4) + timestamp(4)
+                // type is at index 3, not 2
+                if (recv_buffer.size() >= 12 &&
+                    recv_buffer[0] == 0x50 && recv_buffer[1] == 0x53) {
+
+                    uint8_t type = recv_buffer[3]; // corrected offset
+
+                    if (type == 0x03) { // HEARTBEAT — APK uses this as discovery ping
+                        spdlog::info("Discovery ping from {}:{}",
+                            inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+                        // Reply so APK can see this server in the list
+                        // register_client=false: don't set has_client yet, wait for CONNECT_REQ
+                        transport.send_connect_response(
+                            client_addr, true,
+                            static_cast<uint16_t>(config.width),
+                            static_cast<uint16_t>(config.height),
+                            static_cast<uint16_t>(config.bitrate_kbps),
+                            false); // <-- discovery only, don't register as client
+
+                    } else if (type == 0x10) { // CONNECT_REQ
+                        std::cout << "Client connection request received" << std::endl;
+                        transport.send_connect_response(
+                            client_addr, true,
+                            static_cast<uint16_t>(config.width),
+                            static_cast<uint16_t>(config.height),
+                            static_cast<uint16_t>(config.bitrate_kbps));
+                        std::cout << "Client connected!" << std::endl;
+                        update_tray_tip("PenStream Server - Client connected!");
                     }
                 }
             }

@@ -173,17 +173,17 @@ class ConnectionManager(
         if (data.size < 12) return null
         if (data[0] != 0x50.toByte() || data[1] != 0x53.toByte()) return null
 
-        // Header layout: MAGIC[0-1] | VERSION[2] | TYPE[3] | SEQ[4-7] | TS[8-11]
-        val type = data[3].toInt() and 0xFF  // FIX: type is at index 3, not 2
+        // PacketHeader: magic(2) + version(1) + type(1) + seq(4) + timestamp(4)
+        // type is at index 3; payload starts at index 12
+        val type = data[3].toInt() and 0xFF
         if (type != 0x11) return null // CONNECT_RESP
 
         val accepted = data[12].toInt() != 0
         if (!accepted) return null
 
-        // server_width/height are uint16_t in little-endian (Windows/x86)
-        // FIX: swap byte order — [13]=low byte, [14]=high byte
-        val width  = ((data[14].toInt() and 0xFF) shl 8) or (data[13].toInt() and 0xFF)
-        val height = ((data[16].toInt() and 0xFF) shl 8) or (data[15].toInt() and 0xFF)
+        // ConnectResponse payload: accepted(1) + width(2) + height(2) + codec(1) + bitrate(4)
+        val width  = ((data[13].toInt() and 0xFF) shl 8) or (data[14].toInt() and 0xFF)
+        val height = ((data[15].toInt() and 0xFF) shl 8) or (data[16].toInt() and 0xFF)
 
         return ServerInfo(
             name = "PenStream Server",
@@ -198,8 +198,7 @@ class ConnectionManager(
         if (data.size < 13) return false
         if (data[0] != 0x50.toByte() || data[1] != 0x53.toByte()) return false
 
-        // Header layout: MAGIC[0-1] | VERSION[2] | TYPE[3] | SEQ[4-7] | TS[8-11]
-        val type = data[3].toInt() and 0xFF  // FIX: type is at index 3, not 2
+        val type = data[3].toInt() and 0xFF // type at index 3, not 2
         if (type != 0x11) return false
 
         return data[12].toInt() != 0

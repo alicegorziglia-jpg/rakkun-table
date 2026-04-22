@@ -159,12 +159,13 @@ bool UDPTransport::send_video_frame(const std::vector<uint8_t>& encoded_data,
 }
 
 bool UDPTransport::send_connect_response(const sockaddr_in& client_addr, bool accepted,
-                                          uint16_t width, uint16_t height, uint32_t bitrate_kbps) {
+                                          uint16_t width, uint16_t height, uint32_t bitrate_kbps,
+                                          bool register_client) {
     auto packet = PacketBuilder::build_connect_response(
         m_sequence_num++, accepted, width, height, 0x01, bitrate_kbps);
 
     if (send_to(client_addr, packet)) {
-        if (accepted) {
+        if (accepted && register_client) {
             m_client_addr = client_addr;
             m_has_client = true;
             spdlog::info("Client connected: {}:{}",

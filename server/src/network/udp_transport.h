@@ -32,7 +32,8 @@ public:
     bool send_video_frame(const std::vector<uint8_t>& encoded_data, uint32_t frame_id, uint64_t timestamp_us,
                           uint16_t width = 1920, uint16_t height = 1080);
     bool send_connect_response(const sockaddr_in& client_addr, bool accepted,
-                               uint16_t width, uint16_t height, uint32_t bitrate_kbps);
+                               uint16_t width, uint16_t height, uint32_t bitrate_kbps,
+                               bool register_client = true);
 
     void set_client_address(const sockaddr_in& addr) { m_client_addr = addr; }
     bool has_client() const { return m_has_client; }
