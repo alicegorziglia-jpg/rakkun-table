@@ -6,6 +6,7 @@
 #include <atomic>
 #include <thread>
 #include <chrono>
+#include <spdlog/spdlog.h>
 
 #include "config/config_loader.h"
 #include "capture/dxgi_capturer.h"
