@@ -52,6 +52,14 @@ struct ConnectResponse {
     uint32_t bitrate_kbps;
 };
 
+struct DiscoveryResponse {
+    PacketHeader header;
+    uint16_t server_port;
+    uint16_t server_width;
+    uint16_t server_height;
+    uint32_t bitrate_kbps;
+};
+
 #pragma pack(pop)
 
 // Packet types
@@ -62,6 +70,7 @@ enum class PacketType : uint8_t {
     CONNECT_REQ = 0x10,
     CONNECT_RESP = 0x11,
     CONNECT_ACK = 0x12,
+    DISCOVERY_RESP = 0x13,
     STATS = 0x20,
 };
 
@@ -98,6 +107,13 @@ public:
         uint8_t& out_buttons);
 
     static bool validate_header(const PacketHeader* header);
+
+    static std::vector<uint8_t> build_discovery_response(
+        uint32_t seq_num,
+        uint16_t port,
+        uint16_t width,
+        uint16_t height,
+        uint32_t bitrate_kbps);
 };
 
 } // namespace penstream::network

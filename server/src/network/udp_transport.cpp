@@ -165,8 +165,8 @@ bool UDPTransport::send_video_frame(const std::vector<uint8_t>& encoded_data,
 }
 
 bool UDPTransport::send_connect_response(const sockaddr_in& client_addr, bool accepted,
-                                          uint16_t width, uint16_t height, uint32_t bitrate_kbps,
-                                          bool register_client) {
+                                            uint16_t width, uint16_t height, uint32_t bitrate_kbps,
+                                            bool register_client) {
     auto packet = PacketBuilder::build_connect_response(
         m_sequence_num++, accepted, width, height, 0x01, bitrate_kbps);
 
@@ -180,6 +180,14 @@ bool UDPTransport::send_connect_response(const sockaddr_in& client_addr, bool ac
         return true;
     }
     return false;
+}
+
+bool UDPTransport::send_discovery_response(const sockaddr_in& client_addr, uint16_t port,
+                                         uint16_t width, uint16_t height, uint32_t bitrate_kbps) {
+    auto packet = PacketBuilder::build_discovery_response(
+        m_sequence_num++, port, width, height, bitrate_kbps);
+
+    return send_to(client_addr, packet);
 }
 
 bool UDPTransport::broadcast_discovery(uint16_t port) {

@@ -35,6 +35,9 @@ public:
                                uint16_t width, uint16_t height, uint32_t bitrate_kbps,
                                bool register_client = true);
 
+    bool send_discovery_response(const sockaddr_in& client_addr, uint16_t port,
+                                uint16_t width, uint16_t height, uint32_t bitrate_kbps);
+
     void set_client_address(const sockaddr_in& addr) { m_client_addr = addr; }
     bool has_client() const { return m_has_client; }
     NetworkStats get_stats() const { return m_stats; }

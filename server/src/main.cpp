@@ -294,16 +294,13 @@ int run() {
                     if (type == 0x03) { // HEARTBEAT — APK uses this as discovery ping
                         spdlog::info("Discovery ping from {}:{}",
                             inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
-                        // Reply so APK can see this server in the list
-                        // register_client=false: don't set has_client yet, wait for CONNECT_REQ
-                        if (transport.send_connect_response(
-                            client_addr, true,
+                        // Reply with discovery payload so APK can enumerate servers
+                        transport.send_discovery_response(
+                            client_addr,
+                            static_cast<uint16_t>(config.port),
                             static_cast<uint16_t>(config.width),
                             static_cast<uint16_t>(config.height),
-                            static_cast<uint16_t>(config.bitrate_kbps),
-                            false)) { // <-- discovery only, don't register as client
-                            spdlog::info("Discovery response sent to {}:{}", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
-                        }
+                            static_cast<uint32_t>(config.bitrate_kbps));
 
                     } else if (type == 0x10) { // CONNECT_REQ
                         std::cout << "Client connection request received" << std::endl;

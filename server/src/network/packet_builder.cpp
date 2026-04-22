@@ -78,6 +78,33 @@ std::vector<uint8_t> PacketBuilder::build_connect_response(
     return buffer;
 }
 
+std::vector<uint8_t> PacketBuilder::build_discovery_response(
+    uint32_t seq_num,
+    uint16_t port,
+    uint16_t width,
+    uint16_t height,
+    uint32_t bitrate_kbps)
+{
+    DiscoveryResponse packet;
+    packet.header.magic = PACKET_MAGIC;
+    packet.header.version = PROTOCOL_VERSION;
+    packet.header.type = static_cast<uint8_t>(PacketType::DISCOVERY_RESP);
+    packet.header.sequence_num = seq_num;
+    packet.header.timestamp = static_cast<uint32_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()
+        ).count());
+
+    packet.server_port = port;
+    packet.server_width = width;
+    packet.server_height = height;
+    packet.bitrate_kbps = bitrate_kbps;
+
+    std::vector<uint8_t> buffer(sizeof(DiscoveryResponse));
+    std::memcpy(buffer.data(), &packet, sizeof(DiscoveryResponse));
+    return buffer;
+}
+
 bool PacketBuilder::parse_input_packet(
     const uint8_t* data,
     size_t size,
