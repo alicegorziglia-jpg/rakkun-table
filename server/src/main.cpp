@@ -9,6 +9,7 @@
 
 #include "config/config_loader.h"
 #include "capture/dxgi_capturer.h"
+#include "capture/gdi_capturer.h"
 #include "encode/nvenc_encoder.h"
 #include "encode/mf_encoder.h"
 #include "encode/encoder_interface.h"
@@ -128,53 +129,70 @@ int run() {
     std::cout << "========================================" << std::endl;
     update_tray_tip("PenStream Server - Initializing...");
 
-    // Inicializar captura DXGI
-    capture::DXGICapturer capturer;
-    std::cout << "[1/4] Initializing screen capture..." << std::flush;
-    if (!capturer.initialize()) {
-        std::cerr << " FAILED" << std::endl;
-        std::cerr << "Error: Failed to initialize DXGI capturer" << std::endl;
-        std::cerr << "Possible causes:" << std::endl;
-        std::cerr << "  - No DirectX 11 compatible GPU detected" << std::endl;
-        std::cerr << "  - Desktop Duplication API not available (Windows 8+ required)" << std::endl;
-        std::cerr << "  - Another application is using exclusive fullscreen" << std::endl;
-        std::cerr << "  - Running over Remote Desktop (RDP) — not supported by DXGI" << std::endl;
-        std::cerr << "  - Running inside a VM without GPU passthrough" << std::endl;
-        update_tray_tip("PenStream Server - Error: Capture failed");
-        MessageBoxA(NULL,
-            "Failed to initialize screen capture.\n\n"
-            "Make sure you have:\n"
-            "  - A DirectX 11 compatible GPU\n"
-            "  - Windows 8 or later\n"
-            "  - No exclusive fullscreen applications running\n\n"
-            "If error code is 0x887A0004:\n"
-            "  - You are running over Remote Desktop (RDP)\n"
-            "    -> Run PenStream in a local desktop session instead\n"
-            "  - Or running in a VM without GPU passthrough",
-            "PenStream Server Error", MB_OK | MB_ICONERROR);
-        return 1;
-    }
-    std::cout << " OK (" << capturer.get_width() << "x" << capturer.get_height() << ")" << std::endl;
+    // -------------------------------------------------------------------------
+    // [1/4] Captura de pantalla: DXGI preferido, GDI como fallback automático
+    // -------------------------------------------------------------------------
+    capture::DXGICapturer dxgi_capturer;
+    capture::GDICapturer  gdi_capturer;
+    bool using_gdi = false;
 
-    // Inicializar encoder
+    std::cout << "[1/4] Initializing screen capture..." << std::flush;
+    if (dxgi_capturer.initialize()) {
+        std::cout << " OK (DXGI | "
+                  << dxgi_capturer.get_width() << "x" << dxgi_capturer.get_height()
+                  << ")" << std::endl;
+    } else {
+        std::cout << std::endl;
+        std::cout << "       DXGI failed (RDP/VM detected?), switching to GDI fallback..." << std::flush;
+        if (gdi_capturer.initialize()) {
+            std::cout << " OK (GDI | "
+                      << gdi_capturer.get_width() << "x" << gdi_capturer.get_height()
+                      << ")" << std::endl;
+            using_gdi = true;
+        } else {
+            std::cerr << " FAILED" << std::endl;
+            std::cerr << "Error: Both DXGI and GDI capturers failed." << std::endl;
+            update_tray_tip("PenStream Server - Error: Capture failed");
+            MessageBoxA(NULL,
+                "Failed to initialize screen capture.\n\n"
+                "Both DXGI and GDI capturers failed.\n\n"
+                "Make sure you have:\n"
+                "  - Windows 8 or later\n"
+                "  - An active desktop session (not a service context)",
+                "PenStream Server Error", MB_OK | MB_ICONERROR);
+            return 1;
+        }
+    }
+
+    // Lambda unificada: captura sin importar el backend activo
+    auto do_capture = [&](capture::Frame& frame) -> bool {
+        if (using_gdi) return gdi_capturer.capture_frame(frame);
+        return dxgi_capturer.capture_frame(frame);
+    };
+
+    // -------------------------------------------------------------------------
+    // [2/4] Encoder
+    // -------------------------------------------------------------------------
     encode::EncodeConfig encode_config;
-    encode_config.width       = config.width;
-    encode_config.height      = config.height;
+    encode_config.width       = using_gdi ? gdi_capturer.get_width()  : dxgi_capturer.get_width();
+    encode_config.height      = using_gdi ? gdi_capturer.get_height() : dxgi_capturer.get_height();
     encode_config.bitrate_bps = config.bitrate_kbps * 1000;
     encode_config.fps         = config.fps;
     encode_config.low_latency = config.low_latency;
 
-    // Try hardware encoders first, fall back to MF software encoder
     encode::NVEncoder  nvenc_encoder;
     encode::MFEncoder  mf_encoder;
     encode::NVEncoder* hw_encoder = nullptr;
 
-    nvenc_encoder.set_d3d_device(capturer.get_device());
+    // NVENC solo puede usar el device D3D11 de DXGI; en modo GDI lo saltamos
+    if (!using_gdi) {
+        nvenc_encoder.set_d3d_device(dxgi_capturer.get_device());
+    }
 
     std::cout << "[2/4] Initializing encoder..." << std::flush;
 
-    // Try NVENC (NVIDIA)
-    if (nvenc_encoder.initialize(encode_config)) {
+    // Try NVENC (NVIDIA) — solo si tenemos device D3D11
+    if (!using_gdi && nvenc_encoder.initialize(encode_config)) {
         hw_encoder = &nvenc_encoder;
         std::cout << " OK (NVENC)" << std::endl;
     } else {
@@ -267,30 +285,16 @@ int run() {
             if (transport.receive(recv_buffer, client_addr, 100)) {
                 if (recv_buffer.size() >= 12) {
                     if (recv_buffer[0] == 0x50 && recv_buffer[1] == 0x53) {
-                        // Header layout: MAGIC[0-1] | VERSION[2] | TYPE[3] | SEQ[4-7] | TS[8-11]
-                        uint8_t type = recv_buffer[3]; // FIX: type is at index 3, not 2
+                        uint8_t type = recv_buffer[2];
                         if (type == 0x10) { // CONNECT_REQ
                             std::cout << "Client connection request received" << std::endl;
                             transport.send_connect_response(
                                 client_addr, true,
                                 static_cast<uint16_t>(config.width),
                                 static_cast<uint16_t>(config.height),
-                                static_cast<uint32_t>(config.bitrate_kbps));
+                                static_cast<uint16_t>(config.bitrate_kbps));
                             std::cout << "Client connected!" << std::endl;
                             update_tray_tip("PenStream Server - Client connected!");
-                        } else if (type == 0x03) { // HEARTBEAT - used for auto-discovery
-                            // Respond with server info so the app can find us on the network.
-                            // We use send_to directly to avoid marking the client as connected yet
-                            // (the real connection happens when a CONNECT_REQ arrives).
-                            auto discovery_resp = network::PacketBuilder::build_connect_response(
-                                0, true,
-                                static_cast<uint16_t>(config.width),
-                                static_cast<uint16_t>(config.height),
-                                0x01,
-                                static_cast<uint32_t>(config.bitrate_kbps));
-                            transport.send_to(client_addr, discovery_resp);
-                            std::cout << "Discovery probe answered to "
-                                      << inet_ntoa(client_addr.sin_addr) << std::endl;
                         }
                     }
                 }
@@ -313,7 +317,7 @@ int run() {
 
         if (elapsed >= frame_interval) {
             capture::Frame frame;
-            if (capturer.capture_frame(frame)) {
+            if (do_capture(frame)) {
                 std::vector<uint8_t> encoded_data;
                 if (do_encode(frame, encoded_data) && !encoded_data.empty()) {
                     if (transport.send_video_frame(encoded_data, frame_id, frame.timestamp_us,

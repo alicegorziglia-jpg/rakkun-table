@@ -23,6 +23,7 @@ endif()
 add_executable(penstream_server
     src/main.cpp
     src/capture/dxgi_capturer.cpp
+    src/capture/gdi_capturer.cpp
     src/capture/frame_pool.cpp
     src/encode/nvenc_encoder.cpp
     src/encode/amf_encoder.cpp
@@ -61,6 +62,7 @@ target_link_libraries(penstream_server PRIVATE
     mfplat
     mfuuid
     user32
+    gdi32
     ws2_32
 )
 
