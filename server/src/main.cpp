@@ -265,8 +265,6 @@ int run() {
     update_tray_tip("PenStream Server - Waiting for client...");
 
     uint32_t frame_id = 0;
-    // Discovery broadcasting timer: periodically broadcast server presence on LAN
-    static auto last_discovery = std::chrono::steady_clock::now();
     auto frame_interval   = std::chrono::microseconds(1000000 / config.fps);
     auto last_frame_time  = std::chrono::steady_clock::now();
     uint32_t frames_sent  = 0;
@@ -274,15 +272,6 @@ int run() {
     bool was_connected = false;
 
     while (g_running.load()) {
-        // Periodic LAN discovery broadcast when no client is connected
-        auto now_loop = std::chrono::steady_clock::now();
-        if (!transport.has_client()) {
-            if (now_loop - last_discovery > std::chrono::seconds(2)) {
-                // Broadcast presence on the LAN to help APK discover the server
-                transport.broadcast_discovery(static_cast<uint16_t>(config.port));
-                last_discovery = now_loop;
-            }
-        }
         // Process Windows messages
         MSG msg;
         while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
@@ -307,22 +296,25 @@ int run() {
                             inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
                         // Reply so APK can see this server in the list
                         // register_client=false: don't set has_client yet, wait for CONNECT_REQ
-                        transport.send_connect_response(
+                        if (transport.send_connect_response(
                             client_addr, true,
                             static_cast<uint16_t>(config.width),
                             static_cast<uint16_t>(config.height),
                             static_cast<uint16_t>(config.bitrate_kbps),
-                            false); // <-- discovery only, don't register as client
+                            false)) { // <-- discovery only, don't register as client
+                            spdlog::info("Discovery response sent to {}:{}", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+                        }
 
                     } else if (type == 0x10) { // CONNECT_REQ
                         std::cout << "Client connection request received" << std::endl;
-                        transport.send_connect_response(
+                        if (transport.send_connect_response(
                             client_addr, true,
                             static_cast<uint16_t>(config.width),
                             static_cast<uint16_t>(config.height),
-                            static_cast<uint16_t>(config.bitrate_kbps));
-                        std::cout << "Client connected!" << std::endl;
-                        update_tray_tip("PenStream Server - Client connected!");
+                            static_cast<uint16_t>(config.bitrate_kbps))) {
+                            std::cout << "Client connected!" << std::endl;
+                            update_tray_tip("PenStream Server - Client connected!");
+                        }
                     }
                 }
             }

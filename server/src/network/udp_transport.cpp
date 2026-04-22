@@ -33,6 +33,9 @@ bool UDPTransport::initialize() {
         return false;
     }
 
+    // Allow address reuse to ease development scenarios
+    int opt = 1;
+    setsockopt(m_socket, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<char*>(&opt), sizeof(opt));
     if (!bind_socket()) {
         closesocket(m_socket);
         m_socket = INVALID_SOCKET;
@@ -128,8 +131,8 @@ bool UDPTransport::receive(std::vector<uint8_t>& out_data, sockaddr_in& out_addr
     int addr_len = sizeof(out_addr);
 
     int result = recvfrom(m_socket, reinterpret_cast<char*>(out_data.data()),
-                          static_cast<int>(out_data.size()), 0,
-                          reinterpret_cast<sockaddr*>(&out_addr), &addr_len);
+                           static_cast<int>(out_data.size()), 0,
+                           reinterpret_cast<sockaddr*>(&out_addr), &addr_len);
 
     if (result == SOCKET_ERROR) {
         int err = WSAGetLastError();
@@ -139,6 +142,9 @@ bool UDPTransport::receive(std::vector<uint8_t>& out_data, sockaddr_in& out_addr
         return false;
     }
 
+    // Debug: log inbound packet source
+    spdlog::debug("UDP recv: {} bytes from {}:{}", result,
+                  inet_ntoa(out_addr.sin_addr), ntohs(out_addr.sin_port));
     out_data.resize(result);
     m_stats.packets_received++;
     m_stats.bytes_received += result;
