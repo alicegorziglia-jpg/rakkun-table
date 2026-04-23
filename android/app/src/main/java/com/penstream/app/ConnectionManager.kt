@@ -176,22 +176,43 @@ class ConnectionManager(
         // PacketHeader: magic(2) + version(1) + type(1) + seq(4) + timestamp(4)
         // type is at index 3; payload starts at index 12
         val type = data[3].toInt() and 0xFF
-        if (type != 0x11) return null // CONNECT_RESP
+        if (type == 0x11) {
+            val accepted = data[12].toInt() != 0
+            if (!accepted) return null
 
-        val accepted = data[12].toInt() != 0
-        if (!accepted) return null
+            // ConnectResponse payload: accepted(1) + width(2) + height(2) + codec(1) + bitrate(4)
+            val width  = ((data[13].toInt() and 0xFF) shl 8) or (data[14].toInt() and 0xFF)
+            val height = ((data[15].toInt() and 0xFF) shl 8) or (data[16].toInt() and 0xFF)
 
-        // ConnectResponse payload: accepted(1) + width(2) + height(2) + codec(1) + bitrate(4)
-        val width  = ((data[13].toInt() and 0xFF) shl 8) or (data[14].toInt() and 0xFF)
-        val height = ((data[15].toInt() and 0xFF) shl 8) or (data[16].toInt() and 0xFF)
+            return ServerInfo(
+                name = "PenStream Server",
+                address = address.hostAddress ?: "",
+                port = port,
+                width = width,
+                height = height
+            )
+        } else if (type == 0x13) {
+            // DiscoveryResponse payload: header + server_port(2) + width(2) + height(2) + bitrate(4)
+            if (data.size < 22) return null
+            val serverPort = ((data[12].toInt() and 0xFF) or ((data[13].toInt() and 0xFF) shl 8))
+            val width  = ((data[14].toInt() and 0xFF) shl 8) or (data[15].toInt() and 0xFF)
+            val height = ((data[16].toInt() and 0xFF) shl 8) or (data[17].toInt() and 0xFF)
+            // bitrate_kbps is little-endian
+            val bitrate = ((data[18].toInt() and 0xFF) or
+                          ((data[19].toInt() and 0xFF) shl 8) or
+                          ((data[20].toInt() and 0xFF) shl 16) or
+                          ((data[21].toInt() and 0xFF) shl 24))
 
-        return ServerInfo(
-            name = "PenStream Server",
-            address = address.hostAddress ?: "",
-            port = port,
-            width = width,
-            height = height
-        )
+            return ServerInfo(
+                name = "PenStream Server",
+                address = address.hostAddress ?: "",
+                port = serverPort,
+                width = width,
+                height = height
+            )
+        }
+
+        return null
     }
 
     private fun parseConnectResponse(data: ByteArray): Boolean {
